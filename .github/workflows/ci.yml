@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # The repo starts out as LICENSE + README; the app lands later. Every
+  # downstream job keys off these outputs so an empty tree stays green.
+  detect:
+    name: detect project layout
+    runs-on: ubuntu-latest
+    outputs:
+      has_package_json: ${{ steps.probe.outputs.has_package_json }}
+      has_dockerfile: ${{ steps.probe.outputs.has_dockerfile }}
+      pkg_manager: ${{ steps.probe.outputs.pkg_manager }}
+      pnpm_version: ${{ steps.probe.outputs.pnpm_version }}
+      has_test: ${{ steps.probe.outputs.has_test }}
+      has_build: ${{ steps.probe.outputs.has_build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: probe
+        run: |
+          has_package_json=false has_dockerfile=false pkg_manager=none pnpm_version="" has_test=false has_build=false
+          [ -f package.json ] && has_package_json=true
+          [ -f Dockerfile ] && has_dockerfile=true
+          if [ "$has_package_json" = true ]; then
+            pm=$(jq -r '.packageManager // ""' package.json)
+            if [ -f pnpm-lock.yaml ] || [ "${pm%%@*}" = pnpm ]; then
+              pkg_manager=pnpm
+              # Leave version empty when package.json pins one via packageManager
+              # so pnpm/action-setup reads it from there instead of conflicting.
+              [ "${pm%%@*}" = pnpm ] || pnpm_version=latest
+            else
+              pkg_manager=npm
+            fi
+            has_test=$(jq -r 'if .scripts.test then "true" else "false" end' package.json)
+            has_build=$(jq -r 'if .scripts.build then "true" else "false" end' package.json)
+          fi
+          {
+            echo "has_package_json=$has_package_json"
+            echo "has_dockerfile=$has_dockerfile"
+            echo "pkg_manager=$pkg_manager"
+            echo "pnpm_version=$pnpm_version"
+            echo "has_test=$has_test"
+            echo "has_build=$has_build"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  test:
+    name: install + test + build
+    needs: detect
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: nothing to do yet
+        if: needs.detect.outputs.has_package_json != 'true'
+        run: echo "No package.json in this tree; skipping install/test/build."
+      - uses: pnpm/action-setup@v4
+        if: needs.detect.outputs.pkg_manager == 'pnpm'
+        with:
+          version: ${{ needs.detect.outputs.pnpm_version }}
+      - uses: actions/setup-node@v4
+        if: needs.detect.outputs.has_package_json == 'true'
+        with:
+          node-version: 22
+          cache: ${{ needs.detect.outputs.pkg_manager }}
+      - name: install
+        if: needs.detect.outputs.has_package_json == 'true'
+        run: |
+          if [ "${{ needs.detect.outputs.pkg_manager }}" = pnpm ]; then
+            if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi
+          else
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          fi
+      - name: test
+        if: needs.detect.outputs.has_package_json == 'true' && needs.detect.outputs.has_test == 'true'
+        run: ${{ needs.detect.outputs.pkg_manager }} test
+      - name: build
+        if: needs.detect.outputs.has_package_json == 'true' && needs.detect.outputs.has_build == 'true'
+        run: ${{ needs.detect.outputs.pkg_manager }} run build
+
+  docker:
+    name: docker build
+    needs: [detect, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.detect.outputs.has_dockerfile == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: hackyard-bonfire:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # VPS-01 pulls the repo itself (webhook-pull); we only tell it which SHA is
+  # green. Runs when test passed and docker either passed or was skipped
+  # because there is no Dockerfile yet.
+  notify-vps:
+    name: notify VPS-01 (webhook-pull)
+    needs: [detect, test, docker]
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.detect.result == 'success'
+      && needs.test.result == 'success'
+      && (needs.docker.result == 'success' || needs.docker.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+      WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+    steps:
+      - name: POST bonfire-deploy webhook
+        env:
+          SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event.before }}
+          REPO: ${{ github.repository }}
+          DELIVERY: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then
+            echo "::warning::DEPLOY_WEBHOOK_URL / DEPLOY_WEBHOOK_SECRET not set; skipping VPS-01 notify. Add them under repo Settings > Secrets once VPS-01 registers the bonfire-deploy hook."
+            exit 0
+          fi
+          # GitHub push-shaped payload; deploy.sh reads .after for the SHA to check out.
+          payload=$(jq -cn --arg ref "refs/heads/main" --arg after "$SHA" --arg before "$BEFORE" --arg repo "$REPO" \
+            '{ref:$ref, after:$after, before:$before, repository:{full_name:$repo}, head_commit:{id:$after}}')
+          sig=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')
+          code=$(curl -sS -o /tmp/resp.txt -w '%{http_code}' -X POST "$WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -H 'X-GitHub-Event: push' \
+            -H "X-GitHub-Delivery: $DELIVERY" \
+            -H "X-Hub-Signature-256: sha256=$sig" \
+            --data "$payload")
+          echo "webhook responded $code"; cat /tmp/resp.txt || true
+          case "$code" in 2*) exit 0;; *) echo "::error::webhook returned $code"; exit 1;; esac
