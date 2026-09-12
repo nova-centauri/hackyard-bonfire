@@ -33,13 +33,10 @@ Done in this pass:
 - Authored textures for bark, end grain, exposed wood, soil and steam, with
   OpenGL normals; bark normal is the lighting gain.
 
-Known gap after this pass: the authored bark and end-grain **emissive masks**
-load and report `applied`, but the living studies' burn shader
-(`src/log-burning-material.js`) overwrites the emissive term with its own
-procedural crack glow, so the masks change nothing on screen there. A small
-gated change (a per-slot flag raised when an authored mask loads, multiplying
-the plate glow by the sampled mask) was drafted and held back for review; it
-is item 6 below.
+- Authored bark and end-grain emissive masks steer the burn shader's char
+  glow (`src/log-burning-material.js`): a per-slot uniform flag is raised when
+  a mask loads, so the glow concentrates in the painted fissures; procedural
+  masks leave the glow unchanged.
 
 ## Next
 
@@ -54,10 +51,7 @@ is item 6 below.
    wind tied to gusts.
 5. **Cold-start minigame** remains planned (`docs/cold-start-minigame.md`);
    it is interaction work and comes after the ambient experience is finished.
-6. **Authored emissive masks in the burn shader**: read the emissive texel in
-   the plate-glow term when an authored mask is present, so the painted
-   fissures are where the char shines. Uniform-gated, no recompile.
-7. **Texture payload**: the authored set is about 19 MB, most of it the two
+6. **Texture payload**: the authored set is about 19 MB, most of it the two
    PNG normals. The soil normal is viewed from a distance and could drop to
    1024² without visible loss; bark should stay 2048².
 
@@ -84,3 +78,6 @@ is item 6 below.
   normal is the intended lighting gain.
 - 2026-09-12 — Texture branch reviewed against the loader and rendered
   headlessly (all slots applied, no shader errors); merged to main.
+- 2026-09-12 — Authored emissive masks wired into the burn shader's char
+  glow behind a per-slot flag; verified headlessly (no shader errors, flag
+  reaches the compiled programs).

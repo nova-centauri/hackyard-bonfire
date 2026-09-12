@@ -198,3 +198,21 @@ test('a different fracture location invalidates the donor geometry even when sev
   assert.notDeepEqual(mesh.geometry.attributes.position.array,first);
   sealedEdges(mesh.geometry);
 });
+
+test('authored emissive masks are wired into the char glow only when their flag is raised', async () => {
+  const { burningMaterial, authoredEmissive } = await import('../src/log-burning-material.js');
+  const emission = new THREE.Texture(), base = new THREE.MeshStandardMaterial({ emissiveMap: emission, emissive: '#ffb68b' });
+  const uniforms = { uWood: { value: 1 }, uChar: { value: 0 }, uHeat: { value: 0 }, uBurnMap: { value: null }, uBurnSlot: { value: 0 }, uBurnLength: { value: 1 }, uBurnTime: { value: 0 }, uLocalizedBurn: { value: 0 } };
+  for (const cap of [false, true]) {
+    const material = burningMaterial(base, uniforms, cap);
+    const shader = { uniforms: {}, vertexShader: '#include <begin_vertex>', fragmentShader: '#include <map_fragment>\n#include <emissivemap_fragment>' };
+    material.onBeforeCompile(shader);
+    assert.strictEqual(shader.uniforms.uAuthoredEmissive, cap ? authoredEmissive.end : authoredEmissive.bark, 'caps and bark read separate flags');
+    assert.ok(shader.fragmentShader.includes('emissiveColor.r'), 'the glow samples the emissive texel');
+    assert.ok(shader.fragmentShader.includes('uAuthoredEmissive'));
+    assert.ok(shader.fragmentShader.indexOf('#include <emissivemap_fragment>') < shader.fragmentShader.indexOf('emissiveColor.r'), 'the texel is sampled by the chunk before the glow uses it');
+    material.dispose();
+  }
+  assert.equal(authoredEmissive.bark.value, 0, 'procedural masks leave the glow untouched by default');
+  assert.ok(Object.isFrozen(authoredEmissive));
+});

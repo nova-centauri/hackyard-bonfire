@@ -1,14 +1,22 @@
 // Surface state is fixed to the wood's material coordinates, so a hot face
 // remains the same face when a piece rolls. The atlas stores thermal state,
 // not a painted light projected from the fire.
+
+// The procedural char glow ignores the material's emissive map. When an
+// authored emissive mask (white where cracks should shine) has been loaded for
+// a slot, its flag is raised and the glow concentrates along those cracks.
+// Shared uniforms, so raising a flag needs no recompile.
+export const authoredEmissive = Object.freeze({ bark: { value: 0 }, end: { value: 0 } });
+
 export function burningMaterial(base, uniforms, cap = false) {
   const material = base.clone();
   material.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, uniforms);
+    shader.uniforms.uAuthoredEmissive = cap ? authoredEmissive.end : authoredEmissive.bark;
     shader.vertexShader = 'varying vec3 vBurnPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvBurnPosition=position;');
     shader.fragmentShader = `varying vec3 vBurnPosition;
-      uniform float uWood,uHeat,uChar,uBurnSlot,uBurnLength,uBurnTime,uLocalizedBurn;
+      uniform float uWood,uHeat,uChar,uBurnSlot,uBurnLength,uBurnTime,uLocalizedBurn,uAuthoredEmissive;
       uniform sampler2D uBurnMap;
       float burnHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       float burnNoise(vec2 p,float wrap){
@@ -73,9 +81,14 @@ export function burningMaterial(base, uniforms, cap = false) {
       emberColor=mix(emberColor,vec3(3.8,.48,.012),smoothstep(.68,.98,emberHeat)*(.22+fissureHalo*.78));
       // Hot plates glow throughout; narrow, deeply recessed fissures stay dark.
       float plateLight=plateFace*smoothstep(.14,.42,broadGrain*.7+cells.z*.3)*(.50+cells.z*.32+grain*.18)*(1.-crust*.9);
+      #ifdef USE_EMISSIVEMAP
+        // An authored crack mask (the sampled emissive texel) concentrates the
+        // glow along the painted fissures; plate faces dim, cracks brighten.
+        plateLight*=mix(1.,.45+1.25*smoothstep(.05,.55,emissiveColor.r),uAuthoredEmissive);
+      #endif
       totalEmissiveRadiance=emberColor*plateLight*incandescent*emberBreath*(1.-ashDust)*.72;
     `);
   };
-  material.customProgramCacheKey = () => `localized-ember-plates-${cap ? 'end' : 'bark'}-2`;
+  material.customProgramCacheKey = () => `localized-ember-plates-${cap ? 'end' : 'bark'}-3`;
   return material;
 }

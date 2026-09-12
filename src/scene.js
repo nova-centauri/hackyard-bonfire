@@ -24,6 +24,7 @@ import { createTwigInstances } from './twig-render.js';
 import { createWeather } from './weather.js';
 import { TEXTURE_MANIFEST } from './texture-manifest.js';
 import { collectMaterials, loadAuthoredTextures } from './texture-loader.js';
+import { authoredEmissive } from './log-burning-material.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -199,7 +200,13 @@ export class BonfireViewer {
   if(study.texturesRequested||!Object.keys(TEXTURE_MANIFEST).length)return;
   study.texturesRequested=true;
   loadAuthoredTextures(TEXTURE_MANIFEST,study.textureRegistry,()=>collectMaterials([study.scene]),{base:import.meta.env?.BASE_URL||'/'})
-   .then(report=>{console.info('Bonfire textures:',report);this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;this.queueRender();});
+   .then(report=>{
+    console.info('Bonfire textures:',report);
+    // Authored crack masks steer the procedural char glow; procedural masks do not.
+    if(report.bark?.emissive==='applied')authoredEmissive.bark.value=1;
+    if(report.endGrain?.emissive==='applied')authoredEmissive.end.value=1;
+    this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;this.queueRender();
+   });
  }
  // Project the flames' centre, top and width into screen space for the haze.
  updateFinishUniforms() {
