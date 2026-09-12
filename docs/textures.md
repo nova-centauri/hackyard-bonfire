@@ -1,10 +1,10 @@
 # Textures: how to author and drop in the real ones
 
-Status: every texture is generated procedurally at startup and always will be
-as a fallback. This document is the brief for replacing them with authored
-textures. Nothing in the app needs to change beyond listing files in
-`src/texture-manifest.js`; the loader (`src/texture-loader.js`) swaps each file
-into every material that used the procedural version once it has decoded.
+Status: every slot in this brief now has an authored file under `public/textures/`,
+listed in `src/texture-manifest.js`. Procedural textures still generate at startup
+and remain the fallback if a file is missing. The loader (`src/texture-loader.js`)
+swaps each file into every material that used the procedural version once it has
+decoded. Sources and the OpenGL normal bake live in `planning/`.
 
 ## The rules that apply to every texture
 

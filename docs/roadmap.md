@@ -30,22 +30,21 @@ Done in this pass:
 - Texture pipeline groundwork: manifest, loader, authoring brief
   (`docs/textures.md`); procedural bark generation no longer allocates nine
   million strings at startup.
+- Authored textures for bark, end grain, exposed wood, soil and steam, with
+  OpenGL normals; bark normal is the lighting gain.
 
 ## Next
 
-1. **Texture pass** (owner: Steve). Author the slots in `docs/textures.md`,
-   drop files in `public/textures/`, list them in `src/texture-manifest.js`.
-   Expect the bark normal map to be the single biggest visual gain.
-2. **Volumetric resolution**: render fire and smoke at half resolution with a
+1. **Volumetric resolution**: render fire and smoke at half resolution with a
    depth-aware upsample on Medium and below. Largest remaining GPU lever.
-3. **Long-session variety**: occasional larger events (a log splitting along
+2. **Long-session variety**: occasional larger events (a log splitting along
    its length, a stack collapse with a spark shower) on a slow schedule; a
    very slow drift of the ambient colour temperature with the fire's age.
-4. **Ash and coal continuity**: coals should be replenished from shed char in
+3. **Ash and coal continuity**: coals should be replenished from shed char in
    place over hours (mass exists in the model; the bed geometry only shrinks).
-5. **Audio**: a second field recording for variety, and a low-level breath of
+4. **Audio**: a second field recording for variety, and a low-level breath of
    wind tied to gusts.
-6. **Cold-start minigame** remains planned (`docs/cold-start-minigame.md`);
+5. **Cold-start minigame** remains planned (`docs/cold-start-minigame.md`);
    it is interaction work and comes after the ambient experience is finished.
 
 ## Deferred or rejected
@@ -55,7 +54,7 @@ Done in this pass:
 - Screen wake-lock: would keep a laptop screen on indefinitely; left to the
   operating system.
 - Replacing the procedural stones with textured ones: needs UVs or triplanar
-  mapping; not worth it until the wood textures are in.
+  mapping; wood textures are in, so this is the remaining material gap.
 
 ## Work log
 
@@ -66,3 +65,6 @@ Done in this pass:
 - 2026-09-12 — Wind, pops, noise flicker, moving light, heat haze, vignette.
 - 2026-09-12 — Tending by default; remembered preferences.
 - 2026-09-12 — Texture manifest and loader; texture brief; docs refresh.
+- 2026-09-12 — Authored PBR set (bark, end grain, exposed wood, soil, steam
+  puff). Albedo from Grok Imagine; OpenGL normals baked from height. Bark
+  normal is the intended lighting gain.

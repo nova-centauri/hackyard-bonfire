@@ -40,6 +40,10 @@ export function swapTexture(materials, previous, replacement, { role = 'map' } =
       else material[slot] = replacement;
       changed = true;
     }
+    if (material.uniforms) for (const uniform of Object.values(material.uniforms)) {
+      if (uniform?.value !== previous) continue;
+      uniform.value = replacement; changed = true;
+    }
     if (changed) { material.needsUpdate = true; touched++; }
   }
   return touched;
@@ -62,10 +66,15 @@ export function loadAuthoredTextures(manifest, registry, materialsProvider, { ba
     if (!roles || !handles) continue;
     for (const [role, url] of Object.entries(files || {})) {
       if (!(role in roles) || typeof url !== 'string') continue;
-      const previous = role === 'normal' ? handles.bump : handles[role];
-      if (!previous) continue;
+      if (!(role === 'normal' ? handles.bump : handles[role])) continue;
       jobs.push(new Promise(resolve => {
         loader.load(base + url.replace(/^\//, ''), texture => {
+          // Resolve the handle at decode time. Albedo is listed first and often
+          // finishes first; it carries the shared bump slot with it, so a
+          // normal captured against the procedural texture at schedule time
+          // would no longer find a material to swap.
+          const previous = role === 'normal' ? handles.bump : handles[role];
+          if (!previous) return resolve({ slot, role, status: 'unused' });
           configureAuthoredTexture(texture, role, previous);
           const count = swapTexture(materialsProvider(), previous, texture, { role });
           // Keep every handle that pointed at the old texture pointing at the new
