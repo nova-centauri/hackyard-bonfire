@@ -4,11 +4,15 @@ import { BonfireViewer } from './scene.js';
 import { mountBurnPanel } from './burn-panel.js';
 import { FireAudio } from './fire-audio.js';
 import { FirePoker } from './fire-poker.js';
+import { mountFocusMode } from './focus-mode.js';
 
 const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2c1 6-6 7-5 12 1-2 3-3 4-5 0 3 5 5 5 8a5 5 0 0 1-10 0c-2-6 4-9 6-15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const focusIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const gearIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9.5 3-.6 2.2-1.7 1L5 5.6 2.5 9.9 4.1 11v2l-1.6 1.1L5 18.4l2.2-.6 1.7 1 .6 2.2h5l.6-2.2 1.7-1 2.2.6 2.5-4.3-1.6-1.1v-2l1.6-1.1L19 5.6l-2.2.6-1.7-1-.6-2.2h-5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4"/></svg>';
+const soundIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m11 5-5 4H3v6h3l5 4V5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path class="sound-waves" d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path class="sound-muted" d="m16 9 5 6m0-6-5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 document.querySelector('#app').innerHTML=`
- <header class="masthead"><a class="wordmark" href="/" aria-label="Bonfire home">${flameIcon}<span>BONFIRE</span></a><div class="header-label">Studies in fire<span class="slash"> / </span><span class="quiet">Refining the atmosphere</span></div><span class="edition" id="edition">VOLUME 02</span></header>
+ <header class="masthead"><a class="wordmark" href="/" aria-label="Bonfire home">${flameIcon}<span>BONFIRE</span></a><div class="header-label">Studies in fire<span class="slash"> / </span><span class="quiet">Refining the atmosphere</span></div><span class="edition" id="edition">VOLUME 02</span><div class="header-controls"><div id="audio-controls" class="audio-controls" role="group" aria-label="Fire audio"></div><button id="focus-mode" class="focus-toggle" aria-pressed="false" title="Hide menus and focus on the fire">${focusIcon}<span>Focus mode</span></button></div></header>
  <main>
   <section class="stage" aria-label="Bonfire rendering">
    <div id="canvas-container"></div>
@@ -21,7 +25,8 @@ document.querySelector('#app').innerHTML=`
   <div class="collection-bar"><div role="group" aria-label="Study collection"><button data-collection="refinements" class="selected" aria-pressed="true">Animated studies <span>07—08</span></button><button data-collection="originals" aria-pressed="false">Original studies <span>01—05</span></button></div><span class="collection-note">Ink & Wash foundation · Cinematic atmosphere</span></div>
   <nav class="study-nav" aria-label="Rendering styles"></nav>
  </main>
- <footer><span>FLAME, WOOD & EVERYTHING BETWEEN</span><span>Three.js <span class="footer-dot">·</span> 360° studies</span></footer>`;
+ <footer><span>FLAME, WOOD & EVERYTHING BETWEEN</span><span>Three.js <span class="footer-dot">·</span> 360° studies</span></footer>
+ <button id="restore-menus" class="restore-menus" aria-label="Exit focus mode and show menus" title="Show menus (Esc)" hidden>${gearIcon}</button>`;
 
 let viewer,current;
 let selectedCollection='refinements';
@@ -55,15 +60,15 @@ function updateAudioControl(){
  const button=document.querySelector('#sound-toggle');
  if(!button)return;
  const enabled=!!viewer?.audio?.enabled;
- button.textContent=enabled?'Sound on':'Sound off';
+ button.querySelector('span').textContent=enabled?'Sound on':'Sound off';
  button.setAttribute('aria-pressed',String(enabled));
  button.setAttribute('aria-label',enabled?'Mute fire sound':'Enable fire sound');
- document.querySelector('#sound-volume').disabled=!enabled;
  const status=document.querySelector('#sound-status');
- if(!status.dataset.error)status.textContent=!enabled?'Ambience & wood crackles':!current?.animated?'Still study · sound paused':viewer?.paused?'Paused with the fire':'Crackles follow falling logs';
+ if(!status.dataset.error)status.textContent=!enabled?'Enable gentle campfire sound':!current?.animated?'Still study · sound paused':viewer?.paused?'Paused with the fire':'Soft crackles & settling wood';
 }
 function mountAudioControls(){
- document.querySelector('.layers-panel').insertAdjacentHTML('beforeend',`<div class="audio-controls" role="group" aria-label="Fire audio"><button id="sound-toggle" class="sound-toggle" aria-pressed="false" aria-label="Enable fire sound">Sound off</button><label class="audio-volume" for="sound-volume"><span>Volume</span><output id="sound-volume-value" aria-hidden="true">30%</output><input id="sound-volume" type="range" min="0" max="100" value="30" aria-label="Fire sound volume" disabled></label><span id="sound-status" class="audio-status" aria-live="polite">Ambience & wood crackles</span></div>`);
+ const volume=Math.round(viewer.audio.volume*100);
+ document.querySelector('#audio-controls').innerHTML=`<button id="sound-toggle" class="sound-toggle" aria-pressed="false" aria-label="Enable fire sound" aria-describedby="sound-status">${soundIcon}<span>Sound off</span></button><label class="audio-volume" for="sound-volume"><span>Volume</span><input id="sound-volume" type="range" min="0" max="100" value="${volume}" aria-label="Fire sound volume" aria-valuetext="${volume}%"><output id="sound-volume-value" aria-hidden="true">${volume}%</output></label><span id="sound-status" class="audio-status" aria-live="polite">Enable gentle campfire sound</span>`;
  document.querySelector('#sound-toggle').addEventListener('click',async()=>{
   const status=document.querySelector('#sound-status');delete status.dataset.error;
   try{await viewer.audio.setEnabled(!viewer.audio.enabled);}
@@ -73,6 +78,7 @@ function mountAudioControls(){
  document.querySelector('#sound-volume').addEventListener('input',event=>{
   viewer.audio.setVolume(Number(event.target.value)/100);
   document.querySelector('#sound-volume-value').value=`${event.target.value}%`;
+  event.target.setAttribute('aria-valuetext',`${event.target.value}%`);
  });
 }
 function loadStudy(config){
@@ -114,9 +120,11 @@ try{
   stage.dataset.ashCoverage=(viewer.current.ashBed?.userData.ashState?.amount||0).toFixed(3);
   stage.dataset.coalHeat=viewer.current.coals.userData.coalState?.pieces.map(p=>p.heat.toFixed(3)).join(',')||'';
   stage.dataset.audioState=viewer.audio?.context?.state||'off';
+  stage.dataset.audioRecording=viewer.audio?.recordingStatus||'idle';
   updateBurnPanel();
  };
  loadStudy(resolveStudy());
+ mountFocusMode(viewer);
  window.bonfire={viewer,studies,get current(){return current.id;}};
 }catch(error){
  console.error(error);document.querySelector('#loading').innerHTML='This study needs WebGL 2. Please open it in a browser with hardware acceleration enabled.';
