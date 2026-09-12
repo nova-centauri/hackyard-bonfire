@@ -265,3 +265,25 @@ test('silencing releases recording and sluff envelopes before cleanup, even thro
   assert.equal(audio._releasingVoices.size, 0);
   assert.ok(context.sources.every(source => source.disconnected));
 });
+
+test('pop events play a short bright crack with a knock, grouped separately from landings', async () => {
+  const { audio, context, study } = await enabledFire();
+  try {
+    audio._playCrackle(.6, 'pop', 2);
+    const crack = context.sources[2], knock = context.sources[3];
+    const band = crack.connections[0], softness = band.connections[0], envelope = softness.connections[0].gain.events;
+    assert.equal(band.type, 'bandpass'); assert.ok(band.frequency.events[0].value >= 1900, 'a pop is brighter than a settling sluff');
+    assert.equal(softness.frequency.value, 5600);
+    assert.ok(envelope.find(event => event.type === 'linear').time <= .002, 'a pop has an instant onset');
+    assert.ok(crack.stopTimes[0] < .12, 'a pop is over quickly');
+    assert.equal(knock.buffer, audio.brownNoise); assert.ok(knock.stopTimes[0] < .1, 'the knock under a pop is brief');
+    const played = []; audio._playCrackle = (...args) => played.push(args);
+    study.burnVisuals.impactEvents.push({ id: 1, strength: .3, time: study.animationTime, position: { x: 0 }, kind: 'pop' });
+    study.burnVisuals.impactEvents.push({ id: 2, strength: .6, time: study.animationTime, position: { x: 1 } });
+    context.currentTime = 1; audio.update(study, true);
+    assert.deepEqual(played.map(args => args[1]), [true, 'pop'], 'a landing and a pop in the same frame each get their own sound');
+    study.burnVisuals.impactEvents.push({ id: 3, strength: .3, time: study.animationTime, position: { x: 0 }, kind: 'pop' });
+    context.currentTime = 1.05; audio.update(study, true);
+    assert.equal(played.length, 2, 'pops have a short refractory period');
+  } finally { audio.dispose(); }
+});

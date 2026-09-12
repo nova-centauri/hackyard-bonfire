@@ -43,6 +43,7 @@ export class FireAudio {
     this._request = 0;
     this._nextCrackle = Infinity;
     this._lastCollapse = -Infinity;
+    this._lastPop = -Infinity;
     this._suspendTimer = null;
   }
 
@@ -86,6 +87,7 @@ export class FireAudio {
     const cycle = study?.cycle;
     const flame = clamp(cycle ? cycle.flame / 3.5 : .75);
     const heat = clamp(cycle ? cycle.coalHeat : .7);
+    const gust = clamp(study?.weather?.gust ?? 0);
     const hot = !cycle || cycle.phase !== 'Cold fire bed' && (flame > .0001 || heat > .015);
     const active = !!(this.enabled && running && study?.config?.animated && hot && !globalThis.document?.hidden);
     const resuming = active && !this._active;
@@ -121,20 +123,28 @@ export class FireAudio {
     this._target(this.body.gain, fallback * (.018 + flame * .025 + heat * .008) * this._bedVariation, .8);
     this._target(this.hiss.gain, fallback * (.0007 + flame * .0025), .8);
     this._target(this.bodyFilter.frequency, 330 + flame * 310, .8);
-    this._target(this.recordedBed.gain, (1.35 + flame * .8 + heat * .15) * this._bedVariation, 1.2);
+    this._target(this.recordedBed.gain, (1.35 + flame * .8 + heat * .15) * this._bedVariation * (1 + gust * .12), 1.2);
     if (this.recording && now + .15 >= this._nextBed) this._scheduleRecording(now);
     // Contacts in one tumble share a soft sluff. A real-time refractory period
     // keeps rolling/repeated contacts from sounding like a machine gun.
-    if (newImpacts.length && now - this._lastCollapse > .32) {
-      const strongest = newImpacts.reduce((best, event) => event.strength > best.strength ? event : best);
-      this._playCrackle(clamp(strongest.strength + (newImpacts.length - 1) * .08), true, strongest.position?.x || 0);
+    const landings = newImpacts.filter(event => event.kind !== 'pop'), pops = newImpacts.filter(event => event.kind === 'pop');
+    if (landings.length && now - this._lastCollapse > .32) {
+      const strongest = landings.reduce((best, event) => event.strength > best.strength ? event : best);
+      this._playCrackle(clamp(strongest.strength + (landings.length - 1) * .08), true, strongest.position?.x || 0);
       this._lastCollapse = now;
+    }
+    // A pop is the sound of the visible spark burst: sharp, bright, and never
+    // the muffled sluff of settling wood.
+    if (pops.length && now - this._lastPop > .12) {
+      const loudest = pops.reduce((best, event) => event.strength > best.strength ? event : best);
+      this._playCrackle(clamp(.25 + loudest.strength), 'pop', loudest.position?.x || 0);
+      this._lastPop = now;
     }
     if (now >= this._nextCrackle) {
       // Most pops already belong to the field recording. Add only rare, small
       // close cracks; lower heat leaves longer quiet spaces.
       this._playCrackle(.035 + this.random() ** 2 * (.08 + flame * .17), false, (this.random() - .5) * 3);
-      this._nextCrackle = now + (this.recording ? 3.2 + this.random() * 7 : .65 + this.random() * 3.8) / (.45 + flame * .7 + heat * .1);
+      this._nextCrackle = now + (this.recording ? 3.2 + this.random() * 7 : .65 + this.random() * 3.8) / (.45 + flame * .7 + heat * .1 + gust * .35);
     }
   }
 
@@ -239,21 +249,28 @@ export class FireAudio {
   _playCrackle(strength, collapse, x) {
     if (!this._active || this.volume === 0) return;
     strength = clamp(strength);
+    const pop = collapse === 'pop';
+    collapse = collapse === true;
     if (this.voices.size >= MAX_VOICES) {
-      if (!collapse) return;
+      if (!collapse && !pop) return;
       this.voices.values().next().value.stop();
     }
     const context = this.context, now = context.currentTime;
-    const duration = collapse ? .48 + strength * .42 + this.random() * .18 : .028 + strength * .095;
+    const duration = collapse ? .48 + strength * .42 + this.random() * .18 : pop ? .03 + strength * .06 : .028 + strength * .095;
     const nodes = [], sources = [], envelopes = [];
     const gain = context.createGain(); nodes.push(gain);
     envelopes.push(gain.gain);
     const pan = context.createStereoPanner(); nodes.push(pan);
     pan.pan.value = clamp(x * .12, -.42, .42);
     gain.connect(pan).connect(this.master);
-    const amplitude = collapse ? .09 + strength * .14 : .016 + strength * .055;
+    const amplitude = collapse ? .09 + strength * .14 : pop ? .04 + strength * .11 : .016 + strength * .055;
     gain.gain.setValueAtTime(.0001, now);
-    if (collapse) {
+    if (pop) {
+      // A resin pocket bursting: instant onset, a hard first crack, a short tail.
+      gain.gain.linearRampToValueAtTime(amplitude, now + .0012);
+      gain.gain.exponentialRampToValueAtTime(amplitude * .28, now + .009);
+      gain.gain.linearRampToValueAtTime(amplitude * .4, now + .014);
+    } else if (collapse) {
       // A broad, uneven scrape sinking into ash: slower than a crack, softened
       // above 1.2 kHz, with no pitched bass drop or sharp second impact.
       gain.gain.linearRampToValueAtTime(amplitude * .65, now + .035);
@@ -267,28 +284,29 @@ export class FireAudio {
     }
     gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
     const filter = context.createBiquadFilter(); nodes.push(filter);
-    filter.type = 'bandpass'; filter.Q.value = collapse ? .48 : .8;
-    filter.frequency.setValueAtTime(collapse ? 440 + this.random() * 230 : 1400 + this.random() * 1600, now);
-    filter.frequency.exponentialRampToValueAtTime(collapse ? 240 : 1050, now + duration);
+    filter.type = 'bandpass'; filter.Q.value = collapse ? .48 : pop ? .9 : .8;
+    filter.frequency.setValueAtTime(collapse ? 440 + this.random() * 230 : pop ? 1900 + this.random() * 1700 : 1400 + this.random() * 1600, now);
+    filter.frequency.exponentialRampToValueAtTime(collapse ? 240 : pop ? 1400 : 1050, now + duration);
     const softness = context.createBiquadFilter(); nodes.push(softness);
-    softness.type = 'lowpass'; softness.frequency.value = collapse ? 1200 : 4300;
+    softness.type = 'lowpass'; softness.frequency.value = collapse ? 1200 : pop ? 5600 : 4300;
     softness.Q.value = .5;
     const noise = context.createBufferSource(); sources.push(noise);
     noise.buffer = this.whiteNoise; noise.connect(filter).connect(softness).connect(gain);
-    if (collapse) {
+    if (collapse || pop) {
       // A short, damped wood-body resonance, made from noise rather than an
-      // oscillator, gives the soft weight of a log landing on burnt material.
+      // oscillator, gives the soft weight of a log landing on burnt material;
+      // for a pop it is a brief knock under the crack.
       const thud = context.createBufferSource(), envelope = context.createGain();
       const body = context.createBiquadFilter();
       sources.push(thud); nodes.push(envelope, body);
       envelopes.push(envelope.gain);
       thud.buffer = this.brownNoise;
-      body.type = 'bandpass'; body.frequency.value = 180 + this.random() * 75; body.Q.value = .65;
+      body.type = 'bandpass'; body.frequency.value = collapse ? 180 + this.random() * 75 : 360 + this.random() * 140; body.Q.value = collapse ? .65 : .9;
       envelope.gain.setValueAtTime(.0001, now);
-      envelope.gain.linearRampToValueAtTime(.045 + strength * .085, now + .022);
-      envelope.gain.exponentialRampToValueAtTime(.0001, now + .27);
+      envelope.gain.linearRampToValueAtTime(collapse ? .045 + strength * .085 : .018 + strength * .045, now + (collapse ? .022 : .004));
+      envelope.gain.exponentialRampToValueAtTime(.0001, now + (collapse ? .27 : .06));
       thud.connect(body).connect(envelope).connect(pan);
-      thud.start(now, this.random() * (this.brownNoise.duration - .3)); thud.stop(now + .29);
+      thud.start(now, this.random() * (this.brownNoise.duration - .3)); thud.stop(now + (collapse ? .29 : .07));
     }
     this._registerVoice(this.voices, sources, nodes, envelopes, noise);
     noise.start(now, this.random() * (this.whiteNoise.duration - duration));

@@ -36,6 +36,8 @@ export function mountFocusMode(viewer) {
       button.focus({ preventScroll: true });
       window.scrollTo(0, scrollPosition);
     }
+    // Edge-to-edge fire earns a slightly deeper vignette.
+    viewer.setVignette?.(active ? .34 : .24);
     viewer.resize();
   }
 

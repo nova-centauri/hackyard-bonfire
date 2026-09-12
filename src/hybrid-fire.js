@@ -52,6 +52,8 @@ export function createHybridFire(config, depthTexture, logDefs) {
       // Level of detail: ray-march sample count, noise octaves and whether the
       // thin surface combustion sheath is evaluated at all.
       uSteps: { value: 88 }, uOctaves: { value: 3 }, uContact: { value: 1 },
+      // Horizontal wind (x, z): tongues lean downwind, shorten and tear more.
+      uWind: { value: new THREE.Vector2() },
       uSources: { value: sources.map(s => new THREE.Vector4(...s.base.toArray(), s.height)) },
       uShapes: { value: sources.map(s => new THREE.Vector4(s.width, s.lean.x, s.lean.y, s.phase)) },
       uLogA: { value: logDefs.map(d => new THREE.Vector4(...d[0], d[2])) },
@@ -64,6 +66,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
       uniform vec2 uResolution;
       uniform float uTime,uIntensity,uImpact,uCoreHeat,uFreshFuel,uLocalizedBurn,uFuel[12],uLogHeat[7];
       uniform int uSteps,uOctaves,uContact;
+      uniform vec2 uWind;
       uniform mat4 uInvProjection,uCameraWorld;
       uniform vec3 uLo,uHi,uLogBasisX[7],uLogBasisZ[7];
       uniform vec4 uSources[12],uShapes[12],uSourceMotion[12],uLogA[7],uLogB[7];
@@ -79,13 +82,14 @@ export function createHybridFire(config, depthTexture, logDefs) {
         vec3 warp=p;
         warp.xz+=coarse*${variant === 2 ? '.31' : '.19'};
         float body=0., flameHeight=0., skin=0.;
+        float windSpeed=min(1.,length(uWind));
         for(int i=0;i<12;i++) {
           if(uFuel[i]<.015)continue;
           vec4 source=uSources[i],shape=uShapes[i],motion=uSourceMotion[i];
-          float height=source.w*motion.z*(1.+uImpact*.09)*(1.-cleanCore*.12);
+          float height=source.w*motion.z*(1.+uImpact*.09)*(1.-cleanCore*.12)*(1.-.10*windSpeed);
           float t=(warp.y-source.y)/max(height,.015);
           if(t>0. && t<1.) {
-            vec2 center=source.xz+(shape.yz*.70+motion.xy)*t*t;
+            vec2 center=source.xz+(shape.yz*.70+motion.xy)*t*t+uWind*t*t*.55;
             ${variant === 2 ? 'center+=vec2(.28,-.06)*t*t;' : ''}
             float radius=shape.x*(.62+.64*sin(3.141593*t))*pow(1.-t,.74)+.001;
             radius*=motion.w;
@@ -104,7 +108,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
         flow.xz+=coarse*1.2;
         float turbulence=fbm(flow+vec3(7.,-11.,3.));
         ${variant === 2 ? 'float fine=n3(flow*1.93-8.);' : ''}
-        float edge=smoothstep(${variant === 2 ? '.045,.34' : '.02,.28'},body+(turbulence-.5)*${variant === 2 ? '.38' : '.23'});
+        float edge=smoothstep(${variant === 2 ? '.045,.34' : '.02,.28'},body+(turbulence-.5)*${variant === 2 ? '.38' : '.23'}*(1.+.3*windSpeed));
         float flameRoot=smoothstep(0.,.075,flameHeight);
         float volume=edge*flameRoot;
         ${variant === 1 ? `

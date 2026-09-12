@@ -21,6 +21,7 @@ import { QualityGovernor, TIER_SETTINGS, isTier, pixelRatioFor, sizeCap, startin
 import { createEmbers } from './embers.js';
 import { createSteam } from './steam.js';
 import { createTwigInstances } from './twig-render.js';
+import { createWeather } from './weather.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -43,6 +44,7 @@ export class BonfireViewer {
   // frame pacing; applyQuality() pushes that tier into every render system.
   this.governor=new QualityGovernor({tier:'high',cap:'ultra',now:performance.now()});
   this.quality=TIER_SETTINGS[this.governor.tier];this.msaa=this.quality.msaa;this.glowEnabled=true;this.qualityStarted=false;
+  this.vignette=.24;this._projected=[new THREE.Vector3(),new THREE.Vector3(),new THREE.Vector3()];this._right=new THREE.Vector3();
   // Antialias the offscreen scene, not the final full-screen canvas as well.
   this.renderer=new THREE.WebGLRenderer({antialias:false,alpha:false,powerPreference:'default'});
   this.renderer.info.autoReset=false;
@@ -74,7 +76,36 @@ export class BonfireViewer {
   this.renderPass=new RenderPass(new THREE.Scene(),this.camera);this.composer.addPass(this.renderPass);
   this.bloom=new UnrealBloomPass(new THREE.Vector2(1,1),.45,.7,1.05);this.composer.addPass(this.bloom);
   this.composer.addPass(new OutputPass());
-  this.finish=new ShaderPass({uniforms:{tDiffuse:{value:null},uMode:{value:0}},vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',fragmentShader:`varying vec2 vUv;uniform sampler2D tDiffuse;uniform int uMode;void main(){vec3 c=texture2D(tDiffuse,vUv).rgb;float n=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;if(uMode==2){float l=dot(c,vec3(.299,.587,.114));float hatch=step(.88,fract((gl_FragCoord.x+gl_FragCoord.y*.63)*.2));c-=hatch*.055*(1.-smoothstep(.16,.67,l));c+=n*.038;}else{c+=n*.003*smoothstep(.008,.06,dot(c,vec3(.299,.587,.114)));}gl_FragColor=vec4(c,1.);}`});this.composer.addPass(this.finish);
+  // Final pass: heat haze above the fire, a soft vignette, film grain, and the
+  // ink study's hatching. uFire is (centre x, base y, half width, height) in UV.
+  this.finish=new ShaderPass({uniforms:{tDiffuse:{value:null},uMode:{value:0},uTime:{value:0},uHeat:{value:0},uVignette:{value:0},uAspect:{value:1},uFire:{value:new THREE.Vector4(.5,.4,.08,.25)}},
+   vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+   fragmentShader:/* glsl */`varying vec2 vUv;uniform sampler2D tDiffuse;uniform int uMode;uniform float uTime,uHeat,uVignette,uAspect;uniform vec4 uFire;
+    float hz(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+    float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hz(i),hz(i+vec2(1,0)),f.x),mix(hz(i+vec2(0,1)),hz(i+vec2(1,1)),f.x),f.y);}
+    void main(){
+      vec2 uv=vUv;
+      if(uHeat>.001){
+        // Hot air above the flames refracts what is behind it: a column that
+        // widens with height and fades a few flame heights up.
+        vec2 d=vec2((uv.x-uFire.x)*uAspect,uv.y-uFire.y);
+        float halfWidth=max(.01,uFire.z)*(1.+max(0.,d.y)*1.3);
+        float column=exp(-d.x*d.x/(2.*halfWidth*halfWidth));
+        float band=smoothstep(uFire.w*.3,uFire.w*.9,d.y)*(1.-smoothstep(uFire.w*1.6,uFire.w*3.4,d.y));
+        float mask=column*band*uHeat;
+        if(mask>.002){
+          vec2 q=vec2(uv.x*uAspect*9.,uv.y*7.-uTime*1.9);
+          vec2 shimmer=(vec2(vn(q),vn(q+vec2(5.2,1.3)))-.5)*.6+(vec2(vn(q*2.3+vec2(9.,-3.)),vn(q*2.3+vec2(-4.,7.)))-.5)*.4;
+          uv+=shimmer*.011*mask;
+        }
+      }
+      vec3 c=texture2D(tDiffuse,uv).rgb;
+      float n=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;
+      if(uMode==2){float l=dot(c,vec3(.299,.587,.114));float hatch=step(.88,fract((gl_FragCoord.x+gl_FragCoord.y*.63)*.2));c-=hatch*.055*(1.-smoothstep(.16,.67,l));c+=n*.038;}
+      else{c+=n*.003*smoothstep(.008,.06,dot(c,vec3(.299,.587,.114)));}
+      if(uVignette>0.){float r=length((vUv-.5)*vec2(uAspect,1.));c*=1.-uVignette*smoothstep(.45,1.15,r);}
+      gl_FragColor=vec4(c,1.);
+    }`});this.composer.addPass(this.finish);
   this.resizeObserver=new ResizeObserver(()=>this.resize());this.resizeObserver.observe(container);
   document.addEventListener('visibilitychange',()=>{
     this.lastTick=null;
@@ -158,6 +189,25 @@ export class BonfireViewer {
  lockQuality(tier) {
   if(!isTier(tier))return;
   this.governor.lock(tier);this.qualityStarted=true;this.applyQuality(tier);
+ }
+ setVignette(strength) { this.vignette=Math.max(0,Math.min(1,strength));this.queueRender(); }
+ // Project the flames' centre, top and width into screen space for the haze.
+ updateFinishUniforms() {
+  const finish=this.finish.uniforms,study=this.current,aspect=this.renderSize.x/Math.max(1,this.renderSize.y);
+  finish.uAspect.value=aspect;finish.uTime.value=study.animationTime;
+  finish.uVignette.value=this.config?.mode===2?0:this.vignette;
+  let heat=0;
+  if(study.flameCentroid&&this.config?.mode===5&&this.quality.heatHaze){
+    const [centre,top,side]=this._projected,c=study.flameCentroid;
+    centre.copy(c).project(this.camera);
+    top.set(c.x,c.y+study.flameHeight,c.z).project(this.camera);
+    side.copy(c).addScaledVector(this._right.setFromMatrixColumn(this.camera.matrixWorld,0),.7).project(this.camera);
+    if(centre.z<1&&top.z<1&&side.z<1){
+      finish.uFire.value.set(centre.x*.5+.5,centre.y*.5+.5,Math.abs(side.x-centre.x)*.5*aspect,Math.max(.02,(top.y-centre.y)*.5));
+      heat=Math.min(1,(study.cycle?.visibleFlame??3.2)/3.2);
+    }
+  }
+  finish.uHeat.value=heat;
  }
  load(config) {
   this.poker?.reset();
@@ -276,6 +326,7 @@ export class BonfireViewer {
   // Point sprites size themselves in world units: pixels per unit at one metre.
   if(this.current.embers)this.current.embers.uniforms.uPixelScale.value=this.renderSize.y/(2*Math.tan(THREE.MathUtils.degToRad(this.camera.fov)*.5));
   if(this.current.embers)this.current.embers.setDensity(this.quality.emberDensity);
+  this.updateFinishUniforms();
   this.composer.render();
   this.frameCount++;
   if(this.onRender)this.onRender();
@@ -376,7 +427,10 @@ export class BonfireViewer {
   const twigInstances=createTwigInstances(twigs,layers);
   const study={groundHeight:hybrid?groundHeight:()=>0,rockColliders:stoneRing.userData.colliders,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0,
     shadowLights:[light,moon].filter(l=>l.castShadow),steam,embers,twigInstances};
-  if(config.animated)study.motion=createMotionState(layers,{embers,steam,twigInstances,lights:[light,coreLight],coalMaterial:coalMat,barkMaterial:barkMat});
+  if(config.animated){
+    study.motion=createMotionState(layers,{embers,steam,twigInstances,lights:[light,coreLight],coalMaterial:coalMat,barkMaterial:barkMat});
+    study.weather=createWeather(config.seed);study.flameCentroid=new THREE.Vector3(0,.6,0);study.flameHeight=2.4;
+  }
   if(hybrid){
     study.flameSources=volumes.find(v=>v.material.uniforms.uSources).material.uniforms.uSources.value.map(s=>s.clone());
     study.cycle=cycle;

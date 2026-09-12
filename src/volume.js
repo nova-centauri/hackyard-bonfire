@@ -20,7 +20,7 @@ export function createVolume(kind, config, depthTexture) {
  const geometry=new THREE.BoxGeometry(size.x,size.y,size.z);geometry.translate(...bounds[0].clone().add(bounds[1]).multiplyScalar(.5).toArray());
  const material=new THREE.ShaderMaterial({
    transparent:true,depthWrite:false,depthTest:false,side:THREE.BackSide,
-   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0},uSmokeAmount:{value:1},uSteps:{value:steps},uOctaves:{value:3}},
+   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0},uSmokeAmount:{value:1},uSteps:{value:steps},uOctaves:{value:3},uWind:{value:new THREE.Vector2()}},
    vertexShader:`varying vec3 vPosition;void main(){vPosition=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
    fragmentShader:`precision highp float;
      varying vec3 vPosition;
@@ -30,6 +30,7 @@ export function createVolume(kind, config, depthTexture) {
      uniform vec3 uLo,uHi,uSmokeColor;
      uniform float uSeed,uScale,uTime,uSmokeAmount;
      uniform int uMode,uSteps,uOctaves;
+     uniform vec2 uWind;
      ${noise}
      float flame(vec3 p) {
        p.y/=uScale;
@@ -75,7 +76,7 @@ export function createVolume(kind, config, depthTexture) {
          // pair of fixed sine waves made the column sweep from side to side.
          float advectedHeight=h*2.7-uTime*.16;
          vec2 draft=vec2(noise3(vec3(advectedHeight,uSeed,3.1)),noise3(vec3(advectedHeight,uSeed,-7.4)))-.5;
-         vec2 center=vec2(.12+.48*h,.04*h)+draft*(.22+h*.80);
+         vec2 center=vec2(.12+.48*h,.04*h)+draft*(.22+h*.80)+uWind*h*1.4;
          float radius=.34+h*.92;
          ` : `
          vec2 center=vec2(.12+.52*h+sin(h*8.-uTime*.35)*.3,cos(h*6.-uTime*.28)*.22);

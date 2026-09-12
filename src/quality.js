@@ -15,11 +15,11 @@ export const TIER_SETTINGS = Object.freeze({
   // fireSteps / smokeSteps are ray-march samples; octaves are noise layers in
   // the flame field. shadowInterval is the minimum milliseconds between
   // firelight shadow refreshes (Infinity keeps the first shadow map).
-  minimal: Object.freeze({ label: 'Minimal', pixelRatio: .75, pixelBudget: 300e3, fireSteps: 28, smokeSteps: 12, octaves: 2, contactFire: false, msaa: 0, bloom: false, bloomScale: .5, shadowSize: 256, shadowInterval: Infinity, frameInterval: 1000 / 24, emberDensity: .5 }),
-  low: Object.freeze({ label: 'Low', pixelRatio: 1, pixelBudget: 600e3, fireSteps: 44, smokeSteps: 20, octaves: 2, contactFire: true, msaa: 0, bloom: true, bloomScale: .5, shadowSize: 256, shadowInterval: 500, frameInterval: 1000 / 30, emberDensity: .7 }),
-  medium: Object.freeze({ label: 'Medium', pixelRatio: 1.25, pixelBudget: 1.0e6, fireSteps: 64, smokeSteps: 28, octaves: 3, contactFire: true, msaa: 2, bloom: true, bloomScale: .75, shadowSize: 512, shadowInterval: 250, frameInterval: 1000 / 30, emberDensity: .85 }),
-  high: Object.freeze({ label: 'High', pixelRatio: 1.5, pixelBudget: 1.5e6, fireSteps: 88, smokeSteps: 40, octaves: 3, contactFire: true, msaa: 4, bloom: true, bloomScale: 1, shadowSize: 512, shadowInterval: 100, frameInterval: 1000 / 30, emberDensity: 1 }),
-  ultra: Object.freeze({ label: 'Ultra', pixelRatio: 2, pixelBudget: 3.2e6, fireSteps: 112, smokeSteps: 48, octaves: 3, contactFire: true, msaa: 4, bloom: true, bloomScale: 1, shadowSize: 1024, shadowInterval: 0, frameInterval: 1000 / 30, emberDensity: 1 }),
+  minimal: Object.freeze({ label: 'Minimal', pixelRatio: .75, pixelBudget: 300e3, fireSteps: 28, smokeSteps: 12, octaves: 2, contactFire: false, msaa: 0, bloom: false, bloomScale: .5, shadowSize: 256, shadowInterval: Infinity, frameInterval: 1000 / 24, emberDensity: .5, heatHaze: false }),
+  low: Object.freeze({ label: 'Low', pixelRatio: 1, pixelBudget: 600e3, fireSteps: 44, smokeSteps: 20, octaves: 2, contactFire: true, msaa: 0, bloom: true, bloomScale: .5, shadowSize: 256, shadowInterval: 500, frameInterval: 1000 / 30, emberDensity: .7, heatHaze: true }),
+  medium: Object.freeze({ label: 'Medium', pixelRatio: 1.25, pixelBudget: 1.0e6, fireSteps: 64, smokeSteps: 28, octaves: 3, contactFire: true, msaa: 2, bloom: true, bloomScale: .75, shadowSize: 512, shadowInterval: 250, frameInterval: 1000 / 30, emberDensity: .85, heatHaze: true }),
+  high: Object.freeze({ label: 'High', pixelRatio: 1.5, pixelBudget: 1.5e6, fireSteps: 88, smokeSteps: 40, octaves: 3, contactFire: true, msaa: 4, bloom: true, bloomScale: 1, shadowSize: 512, shadowInterval: 100, frameInterval: 1000 / 30, emberDensity: 1, heatHaze: true }),
+  ultra: Object.freeze({ label: 'Ultra', pixelRatio: 2, pixelBudget: 3.2e6, fireSteps: 112, smokeSteps: 48, octaves: 3, contactFire: true, msaa: 4, bloom: true, bloomScale: 1, shadowSize: 1024, shadowInterval: 0, frameInterval: 1000 / 30, emberDensity: 1, heatHaze: true }),
 });
 
 export const tierIndex = tier => TIERS.indexOf(tier);
