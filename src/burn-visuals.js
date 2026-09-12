@@ -196,7 +196,7 @@ export function updateBurnVisuals(study, force = false) {
       const rootY = root.y + pose.radius * .45;
       fu.uSources.value[j].set(root.x, rootY, root.z, Math.min(height, 4.45 - rootY)); fu.uFuel.value[j] = strength;
     }
-    for (const sprite of study.motion.steam) if (sprite.userData.steam.log === i) sprite.userData.steam.origin.copy(a);
+    study.steam?.setOrigin(i, a);
     if (log.shed - view.lastShed[i] > .001 && live) {
       view.lastShed[i] = log.shed;
       for (let k = 0; k < 2; k++) {
@@ -248,7 +248,7 @@ export function updateBurnVisuals(study, force = false) {
   if (flakesChanged) { view.flakes.instanceMatrix.needsUpdate = true; view.flakes.instanceColor.needsUpdate = true; opaqueChanged = true; }
   view.flakes.visible = view.particles.length > 0;
   updateImpactEmbers(view, t);
-  if (updateTwigSettling(view.twigSettling, cycle, t, view.settling.logs, groundHeight)) opaqueChanged = true;
+  if (updateTwigSettling(view.twigSettling, cycle, t, view.settling.logs, groundHeight)) { study.twigInstances?.sync(); opaqueChanged = true; }
   updateCoalBed(study.coals, cycle, force);
   updateAshBed(study.ashBed, cycle, study.coals, t, force);
   return opaqueChanged;

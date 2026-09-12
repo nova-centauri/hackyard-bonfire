@@ -18,6 +18,9 @@ import { createAshBed, updateAshBed } from './ash-bed.js';
 import { createBurnVisuals, updateBurnVisuals } from './burn-visuals.js';
 import { createSceneFuelMesh, disposeFuelMesh } from './fuel-mesh.js';
 import { QualityGovernor, TIER_SETTINGS, isTier, pixelRatioFor, sizeCap, startingTier } from './quality.js';
+import { createEmbers } from './embers.js';
+import { createSteam } from './steam.js';
+import { createTwigInstances } from './twig-render.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -26,11 +29,6 @@ function mesh(scene,geometry,material,position,scale) {
   const m=new THREE.Mesh(geometry,material);
   if(position)m.position.copy(position);if(scale)m.scale.copy(scale);
   m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;
-}
-function line(scene,points,color,opacity=1) {
-  const g=new THREE.BufferGeometry().setFromPoints(points);
-  const m=new THREE.LineBasicMaterial({color,transparent:opacity<1,opacity});
-  const l=new THREE.Line(g,m);scene.add(l);return l;
 }
 function branch(scene,a,b,r,material,sides=7) {
  const delta=b.clone().sub(a),g=new THREE.CylinderGeometry(r*.55,r,delta.length(),sides,3);
@@ -275,6 +273,9 @@ export class BonfireViewer {
     this.depthDirty=false;
   }
   for(const v of volumes){const u=v.material.uniforms;u.uResolution.value.copy(this.renderSize);u.uInvProjection.value.copy(this.camera.projectionMatrixInverse);u.uCameraWorld.value.copy(this.camera.matrixWorld);}
+  // Point sprites size themselves in world units: pixels per unit at one metre.
+  if(this.current.embers)this.current.embers.uniforms.uPixelScale.value=this.renderSize.y/(2*Math.tan(THREE.MathUtils.degToRad(this.camera.fov)*.5));
+  if(this.current.embers)this.current.embers.setDensity(this.quality.emberDensity);
   this.composer.render();
   this.frameCount++;
   if(this.onRender)this.onRender();
@@ -317,7 +318,7 @@ export class BonfireViewer {
    [[.85,.52,.95],[-.22,1.62,-.12],.22],
   ];
   if(mode===4){for(let i=3;i<logDefs.length;i++){logDefs[i][0][1]*=.8;logDefs[i][1][1]*=.58;}}
-  const cycle=hybrid?new BurnCycle(8108):null,logMeshes=[];
+  const cycle=hybrid?new BurnCycle(8108):null,logMeshes=[],steamOrigins=[];
   const fuelMaterials={barkMat,endMat,exposedMat};
   const buildFuel=(li,fuel)=>createSceneFuelMesh({definition:logDefs[li],fuelType:fuel?.fuelType,seed:hybrid?cycle.seed+fuel.id*7919:config.seed+li*7919,mode,hybrid,...(hybrid?{}:{rand})},fuelMaterials);
   for(let li=0;li<logDefs.length;li++) {
@@ -325,17 +326,11 @@ export class BonfireViewer {
     const dir=b.clone().sub(a);
     const log=buildFuel(li,cycle?.logs[li]);opaque.add(log);logMeshes.push(log);
     if(hybrid)log.userData.visualKey=`${cycle.seed}:${cycle.resetSerial}:${cycle.logs[li].id}:${cycle.logs[li].fuelType}`;
-    if(li<3||hybrid){
-      const end=a.clone().addScaledVector(dir.clone().normalize(),-.018);
-      for(let k=0;k<15;k++){
-        const t=k/14;
-        const p=end.clone().add(V(Math.sin(t*7+li)*.11*t,t*.9+.11,Math.cos(t*4)*.04));
-        const mat=new THREE.SpriteMaterial({map:this.cloud,color:mode===2&&!hybrid?'#7b807b':'#c0cace',opacity:(1-t)*.22,depthWrite:false});
-        const sprite=new THREE.Sprite(mat);sprite.position.copy(p);sprite.scale.setScalar(.11+t*.38);sprite.material.rotation=t*3+li;
-        sprite.userData.steam={origin:end.clone(),phase:t,log:li};layers.steam.add(sprite);
-      }
-    }
+    if(li<3||hybrid)steamOrigins.push(a.clone().addScaledVector(dir.clone().normalize(),-.018));
   }
+  // One instanced draw carries every steam puff; origins follow the log ends.
+  const steam=createSteam({logs:steamOrigins.length,perLog:15,map:this.cloud,color:mode===2&&!hybrid?'#7b807b':'#c0cace'});
+  steamOrigins.forEach((origin,li)=>steam.setOrigin(li,origin));layers.steam.add(steam);
   const coals=createCoalBed({seed:config.seed,mode,animated:hybrid,groundHeight:hybrid?groundHeight:()=>0});
   const coalMat=coals.material,obj=new THREE.Object3D();
   const ash=createAshBed(ashSurface);
@@ -372,30 +367,16 @@ export class BonfireViewer {
   else if(mode===0||mode===4){const fire=createVolume('fire',config,this.depthTarget.depthTexture);layers.flames.add(fire);volumes.push(fire);}
   if(mode!==1){const smoke=createVolume('smoke',config,this.depthTarget.depthTexture);layers.smoke.add(smoke);volumes.push(smoke);}
   addStylizedFire(layers,hybrid?{...config,mode:0}:config,logDefs);
-  const sparkPositions=[],sparkColors=[];
-  for(let k=0;k<130;k++){
-    const y=.3+Math.pow(rand(),.72)*5.0,r=.4+y*.17;
-    sparkPositions.push((rand()-.5)*r*2+.04*y,y,(rand()-.5)*r*1.8);
-    const c=new THREE.Color(2+rand(),.32+rand()*.8,.03);sparkColors.push(c.r,c.g,c.b);
-  }
-  const sparkGeo=new THREE.BufferGeometry();sparkGeo.setAttribute('position',new THREE.Float32BufferAttribute(sparkPositions,3));sparkGeo.setAttribute('color',new THREE.Float32BufferAttribute(sparkColors,3));
-  const sparks=new THREE.Points(sparkGeo,new THREE.PointsMaterial({size:mode===1?.037:.022,vertexColors:true,transparent:true,opacity:.94,depthWrite:false}));layers.sparks.add(sparks);
-  if(hybrid){
-    sparks.material.onBeforeCompile=shader=>{
-      shader.fragmentShader=shader.fragmentShader.replace('#include <opaque_fragment>', 'diffuseColor.a*=1.-smoothstep(.12,.5,length(gl_PointCoord-.5));\n#include <opaque_fragment>');
-    };
-    sparks.material.customProgramCacheKey=()=> 'soft-fire-spark-1';
-  }
-  for(let k=0;k<24;k++){
-    const y=.7+rand()*3.7,x=(rand()-.5)*(1+y*.35),z=(rand()-.5)*(1+y*.28);
-    const points=[V(x,y,z),V(x+.009,y+.025+rand()*.06,z),V(x+.018,y+.045+rand()*.095,z)];
-    const streak=line(layers.sparks,points,new THREE.Color(2.4,.65,.1),.7);
-    streak.userData.streak={y,phase:y/5.3,index:k};
-  }
+  // GPU embers share the fire's source and fuel arrays, so sparks rise from
+  // whatever is actually burning and stop with it.
+  const fireVolume=volumes.find(v=>v.material.uniforms.uSources);
+  const embers=createEmbers({seed:config.seed,sources:fireVolume?.material.uniforms.uSources.value,fuel:fireVolume?.material.uniforms.uFuel.value});
+  layers.sparks.add(embers);
   if(hybrid){twigs.position.y=-.16;layers.flames.children.forEach(m=>{if(m.userData.twigFlame)m.position.y=-.16;});}
+  const twigInstances=createTwigInstances(twigs,layers);
   const study={groundHeight:hybrid?groundHeight:()=>0,rockColliders:stoneRing.userData.colliders,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0,
-    shadowLights:[light,moon].filter(l=>l.castShadow)};
-  if(config.animated)study.motion=createMotionState(layers,sparks,[light,coreLight],coalMat,barkMat);
+    shadowLights:[light,moon].filter(l=>l.castShadow),steam,embers,twigInstances};
+  if(config.animated)study.motion=createMotionState(layers,{embers,steam,twigInstances,lights:[light,coreLight],coalMaterial:coalMat,barkMaterial:barkMat});
   if(hybrid){
     study.flameSources=volumes.find(v=>v.material.uniforms.uSources).material.uniforms.uSources.value.map(s=>s.clone());
     study.cycle=cycle;
