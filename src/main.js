@@ -105,6 +105,12 @@ try{
   stage.dataset.shaderErrors=viewer.shaderErrors.length;
   stage.dataset.impactCount=viewer.current.burnVisuals?.impactSerial||0;
   stage.dataset.impactEmbers=viewer.current.burnVisuals?.embers.length||0;
+  stage.dataset.visibleFlame=(viewer.current.cycle?.visibleFlame??0).toFixed(3);
+  stage.dataset.flameSources=viewer.current.volumes.find(v=>v.material.uniforms.uFuel)?.material.uniforms.uFuel.value.map(v=>v.toFixed(3)).join(',')||'';
+  stage.dataset.fragments=viewer.current.burnVisuals?.settling?.fragments?.length||0;
+  stage.dataset.coalCount=viewer.current.coals.count;
+  stage.dataset.ashCoverage=(viewer.current.ashBed?.userData.ashState?.amount||0).toFixed(3);
+  stage.dataset.coalHeat=viewer.current.coals.userData.coalState?.pieces.map(p=>p.heat.toFixed(3)).join(',')||'';
   stage.dataset.audioState=viewer.audio?.context?.state||'off';
   updateBurnPanel();
  };

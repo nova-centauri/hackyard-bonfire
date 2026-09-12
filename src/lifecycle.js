@@ -1,3 +1,6 @@
+import { FUEL_TYPES, getFuelType } from './fuel-types.js';
+import { copyCombustionPose, combustionEnvironment, ensureLogSurface, extinguishLogSurface, nearbyFlameCoupling, updateLogSurface } from './log-combustion.js';
+
 // An art-directed heat / fuel model. Units are simulation seconds and normalized heat.
 // Keep the slow burn independent of the flame shader's motion clock.
 export const BURN_SETTINGS = Object.freeze({ step: .5, woodRate: .00165, charRate: .00072, cooling: .0015 });
@@ -8,28 +11,37 @@ const randFor = seed => () => {
   let n = Math.imul(seed ^ seed >>> 15, 1 | seed); n = n + Math.imul(n ^ n >>> 7, 61 | n) ^ n;
   return ((n ^ n >>> 14) >>> 0) / 4294967296;
 };
-export const PHASE_LABELS = { queued: 'Waiting', fresh: 'Whole log', drying: 'Drying', catching: 'Catching', burning: 'Burning', charred: 'Charring', glowing: 'Glowing char', ash: 'Ash', cold: 'Unlit' };
+export const PHASE_LABELS = { queued: 'Waiting', fresh: 'Fresh wood', drying: 'Drying', catching: 'Catching', burning: 'Burning', charred: 'Charring', glowing: 'Glowing char', ash: 'Ash', cold: 'Unlit' };
 
 export class BurnCycle {
   constructor(seed = 8108) { this.reset(seed); }
   reset(seed) {
     this.resetSerial = (this.resetSerial ?? 0) + 1;
-    this.seed = seed >>> 0; this.random = randFor(this.seed); this.time = 0; this.remainder = 0;
-    this.autoFeed = true; this.events = []; this.serial = 0; this.revision = 0; this.phase = null;
+    this.seed = seed >>> 0; this.random = randFor(this.seed); this.fuelRandom = randFor(this.seed ^ 0xF17ECA7E); this.time = 0; this.remainder = 0;
+    this.autoFeed = true; this.events = []; this.serial = 0; this.revision = 0; this.phase = null; this.logPoses = [];
     const r = this.random;
     this.coalMass = .32 + r() * .4; this.coalHeat = .57 + r() * .22; this.ashMass = .06 + r() * .12;
+    this.fragmentChar = 0; this.fragmentHeat = 0;
     this.ashDeposits = Array(7).fill(0);
     this.nextFeed = 110 + r() * 90; this.feedInterval = 170 + r() * 95;
     const initialCount = 3 + Math.floor(r() * 2);
-    this.logs = Array.from({ length: 7 }, (_, slot) => this.makeLog(slot, slot < initialCount));
-    this.record('A new fire', `${initialCount} logs on the bed · ${7 - initialCount} whole logs waiting`);
+    // Keep the first crossed supports substantial. The lighter pieces start on
+    // top or next in the queue; later pieces can occasionally be lumber or stump.
+    const starterTypes = ['log', 'log', 'small-log', 'kindling'];
+    this.logs = Array.from({ length: 7 }, (_, slot) => this.makeLog(slot, slot < initialCount, starterTypes[slot]));
+    this.record('A new fire', `${initialCount} pieces on the bed · ${7 - initialCount} pieces waiting`);
     this.updateSummary();
   }
-  makeLog(slot, initial = false) {
+  randomFuelType() {
+    // A separate random stream preserves seeded moisture, placement, and timing.
+    const roll = this.fuelRandom();
+    return roll < .48 ? 'log' : roll < .73 ? 'small-log' : roll < .9 ? 'kindling' : roll < .97 ? 'plank' : 'stump';
+  }
+  makeLog(slot, initial = false, fuelType = this.randomFuelType()) {
     const r = this.random, wood = initial ? .24 + r() * .7 : 1;
     // Burning logs have already dried; waiting logs span seasoned to wet wood.
     const moisture = initial ? .008 + r() * .034 : .07 + r() * .28;
-    return { slot, id: ++this.serial, phase: initial ? (wood < .45 ? 'charred' : 'burning') : 'queued',
+    return { slot, id: ++this.serial, fuelType, phase: initial ? (wood < .45 ? 'charred' : 'burning') : 'queued',
       wood, char: initial ? Math.min(1 - wood, .07 + (1 - wood) * .16) : 0, ash: initial ? (1 - wood) * .1 : 0,
       moisture, initialMoisture: moisture, temperature: initial ? .72 + r() * .2 : .025,
       flame: initial ? .55 + r() * .3 : 0, addedAt: initial ? -r() * 260 : null,
@@ -50,21 +62,29 @@ export class BurnCycle {
     return this.coreHeat >= .8 ? 'Very hot' : this.coreHeat >= .55 ? 'Healthy' : this.coreHeat >= .3 ? 'Warming' : this.coreHeat >= .08 ? 'Fading' : 'Cold';
   }
   get burnRateMultiplier() { return .65 + this.coreHeat * 1.1; }
-  addLog() {
+  addLog(fuelType) {
+    if (fuelType !== undefined && !Object.hasOwn(FUEL_TYPES, fuelType)) return false;
     let log = this.logs.find(l => l.phase === 'queued');
     if (!log) {
       const slot = this.logs.findIndex(l => l.phase === 'ash');
       if (slot < 0) return false;
-      log = this.logs[slot] = this.makeLog(slot);
+      log = this.logs[slot] = this.makeLog(slot, false, fuelType);
     }
+    if (fuelType !== undefined) log.fuelType = fuelType;
     log.phase = 'fresh'; log.addedAt = this.time;
-    this.record(`Log ${String(log.id).padStart(2, '0')} added`, 'Whole wood settles onto the bed');
-    this.nextFeed = this.time + this.feedInterval;
+    this.record(`${getFuelType(log.fuelType).label} ${String(log.id).padStart(2, '0')} added`, 'Fresh wood settles onto the bed');
+    // A fast-burning piece needs a follow-up sooner to keep the stack alight.
+    this.nextFeed = this.time + this.feedInterval / Math.max(1, getFuelType(log.fuelType).burnRate);
     this.updateSummary(); return true;
   }
   setAutoFeed(value) {
     this.autoFeed = value;
     if (value) this.nextFeed = Math.max(this.nextFeed, this.time + 10);
+  }
+  setLogPoses(poses = []) {
+    // Copy the physics transforms: accelerated lifecycle steps must not mutate
+    // a render pose, and replacement pieces must not inherit the departed pose.
+    this.logPoses = poses.map(pose => copyCombustionPose(pose));
   }
   advance(seconds) {
     if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError('Burn time must be a finite positive duration.');
@@ -82,38 +102,49 @@ export class BurnCycle {
     const oldFlames = this.logs.map(l => l.flame);
     const oldCoalHeat = this.coalHeat;
     const coreBurnRate = this.burnRateMultiplier;
+    for (const log of active) {
+      const pose = this.logPoses[log.slot];
+      combustionEnvironment(log, pose && (pose.id === undefined || pose.id === log.id) ? pose : null);
+    }
     let flameSum = 0, evaporated = 0;
     for (const log of active) {
+      const fuel = getFuelType(log.fuelType);
+      const name = `${fuel.label} ${String(log.id).padStart(2, '0')}`;
       let neighbors = 0;
       for (const other of active) if (other !== log) {
-        // The crossed stack is closely coupled; upper logs receive less coal contact.
-        neighbors += oldFlames[other.slot] * (Math.abs(other.slot - log.slot) < 3 ? .25 : .16);
+        const coupling = this.logPoses[log.slot] && this.logPoses[other.slot]
+          ? nearbyFlameCoupling(log.surface.pose, other.surface.pose)
+          : Math.abs(other.slot - log.slot) < 3 ? .25 : .16;
+        neighbors += oldFlames[other.slot] * getFuelType(other.fuelType).heatOutput * coupling;
       }
       const bedContact = log.slot < 3 ? .86 : .71;
-      const target = clamp(oldCoalHeat * bedContact + neighbors + oldFlames[log.slot] * .57);
-      log.temperature += (target - log.temperature) * (1 - Math.exp(-dt / (log.moisture > .06 ? 55 : 24)));
-      const dry = Math.min(log.moisture, dt * .00115 * Math.max(0, log.temperature - .14));
+      const bedCoupling = log.surface.bedCoupling;
+      const target = clamp(oldCoalHeat * bedContact * bedCoupling + neighbors + oldFlames[log.slot] * (.43 + Math.min(1, bedCoupling) * .14));
+      log.temperature += (target - log.temperature) * (1 - Math.exp(-dt * fuel.heatRate / (log.moisture > .06 ? 55 : 24)));
+      const dry = Math.min(log.moisture, dt * .00115 * fuel.heatRate * Math.max(0, log.temperature - .14));
       log.moisture -= dry;
       // Evaporation takes energy from the wood and bed before it can burn.
       log.temperature = Math.max(0, log.temperature - dry * .7);
-      evaporated += dry;
+      evaporated += dry * fuel.mass;
       const ignition = log.moisture < .055 && log.temperature > .39 && log.wood > .006;
       const targetFlame = ignition ? clamp((log.temperature - .35) * 2.2) * Math.min(1, log.wood / .17) : 0;
       log.flame += (targetFlame - log.flame) * (1 - Math.exp(-dt / 5));
       if (log.flame < .0005) log.flame = 0;
       const moistureBurnRate = clamp(1 - log.moisture * 1.8, .15, 1);
-      const consumed = Math.min(log.wood, dt * BURN_SETTINGS.woodRate * log.flame * coreBurnRate * moistureBurnRate / log.density);
+      const consumed = Math.min(log.wood, dt * BURN_SETTINGS.woodRate * fuel.burnRate * log.flame * coreBurnRate * moistureBurnRate / log.density);
       log.wood -= consumed; log.char += consumed * .26; log.ash += consumed * .035;
-      const charBurn = log.temperature > .10 ? Math.min(log.char, dt * BURN_SETTINGS.charRate * log.temperature * Math.min(1, log.char / .025)) : 0;
-      log.char -= charBurn; log.ash += charBurn * .8; this.ashMass += charBurn * .2;
-      const shed = Math.min(log.char, dt * .00014 * log.temperature * (1 - log.wood));
-      log.char -= shed; log.shed += shed; this.coalMass += shed;
+      const charBurn = log.temperature > .10 ? Math.min(log.char, dt * BURN_SETTINGS.charRate * fuel.burnRate * log.temperature * Math.min(1, log.char / .025)) : 0;
+      log.char -= charBurn; log.ash += charBurn * .8; this.ashMass += charBurn * .2 * fuel.mass;
+      const shed = Math.min(log.char, dt * .00014 * fuel.burnRate * log.temperature * (1 - log.wood));
+      log.char -= shed; log.shed += shed; this.coalMass += shed * fuel.mass * Math.min(1, bedCoupling);
       // Hot char keeps releasing heat after the visible flame has vanished.
-      this.coalHeat += charBurn * 1.5;
-      flameSum += log.flame;
+      this.coalHeat += charBurn * 1.5 * fuel.mass * Math.min(1, bedCoupling);
+      flameSum += log.flame * fuel.heatOutput * Math.min(1, bedCoupling);
+      updateLogSurface(log, dt, fuel, { consumed, dry, charBurn, shed, coreHeat: oldCoalHeat });
       let phase;
       if (log.wood < .009 && log.char < .003) {
-        this.ashMass += log.wood + log.char; log.wood = 0; log.char = 0; log.flame = 0; phase = 'ash';
+        this.ashMass += (log.wood + log.char) * fuel.mass; log.wood = 0; log.char = 0; log.flame = 0; phase = 'ash';
+        extinguishLogSurface(log);
       } else if (this.time - log.addedAt < 3) phase = 'fresh';
       else if (log.wood < .015) phase = 'glowing';
       else if (log.flame > .08) phase = log.wood < .45 ? 'charred' : log.wood > .92 ? 'catching' : 'burning';
@@ -122,17 +153,17 @@ export class BurnCycle {
       else phase = 'cold';
       if (log.flame > .08 && !log.everLit) {
         log.everLit = true;
-        this.record(`Log ${String(log.id).padStart(2, '0')} caught fire`, oldFlames.some(f => f > .1) ? 'Flame spread from neighboring fuel' : 'Retained coal heat ignited the wood');
+        this.record(`${name} caught fire`, oldFlames.some(f => f > .1) ? 'Flame spread from neighboring fuel' : 'Retained coal heat ignited the wood');
       }
       if (log.shed - log.shedNotice > .018) {
         log.shedNotice = log.shed;
-        this.record(`Log ${String(log.id).padStart(2, '0')} sheds char`, 'Glowing fragments join the ember bed');
+        this.record(`${name} sheds char`, 'Glowing fragments join the ember bed');
       }
       if (phase !== log.phase) {
-        if (phase === 'glowing') this.record(`Log ${String(log.id).padStart(2, '0')} is charcoal`, 'Flame fades; the core keeps glowing');
+        if (phase === 'glowing') this.record(`${name} is charcoal`, 'Flame fades; the core keeps glowing');
         if (phase === 'ash') {
           this.ashDeposits[log.slot] = 1;
-          this.record(`Log ${String(log.id).padStart(2, '0')} became ash`, 'The last of this log has burned away');
+          this.record(`${name} became ash`, 'The last of this piece has burned away');
         }
         log.phase = phase;
       }
@@ -143,11 +174,14 @@ export class BurnCycle {
     if (this.coalHeat < .003 && flameSum < .001) this.coalHeat = 0;
   }
   updateSummary() {
-    this.flame = this.logs.reduce((n, l) => n + l.flame, 0);
-    this.fuel = this.logs.reduce((n, l) => n + (l.phase === 'queued' ? 0 : l.wood + l.char), 0);
+    for (const log of this.logs) ensureLogSurface(log);
+    this.flame = this.logs.reduce((n, l) => n + l.flame * getFuelType(l.fuelType).heatOutput, 0);
+    this.visibleFlame = this.logs.reduce((n, l) => n + (l.phase === 'queued' || l.phase === 'ash' ? 0 : l.visibleFlame) * getFuelType(l.fuelType).heatOutput, 0);
+    this.fuel = this.fragmentChar + this.logs.reduce((n, l) => n + (l.phase === 'queued' ? 0 : (l.wood + l.char) * getFuelType(l.fuelType).mass), 0);
     this.smoke = clamp(this.flame * .23 + this.logs.reduce((n, l) => n + (l.phase === 'queued' || l.phase === 'ash' ? 0 : l.temperature * (l.moisture * 1.5 + l.char * .2)), 0));
     const previous = this.phase;
-    this.phase = this.flame > 1.4 ? 'Established fire' : this.flame > .08 ? 'Low flames' : this.coalHeat > .12 ? 'Ember afterglow' : this.coalHeat > .015 ? 'Cooling ash' : 'Cold fire bed';
+    const emberHeat = Math.max(this.coalHeat, this.fragmentChar > 0 ? this.fragmentHeat : 0);
+    this.phase = this.flame > 1.4 ? 'Established fire' : this.flame > .08 ? 'Low flames' : emberHeat > .12 ? 'Ember afterglow' : emberHeat > .015 ? 'Cooling ash' : 'Cold fire bed';
     if (previous && previous !== this.phase && this.phase === 'Cold fire bed') this.record('The fire is out', this.fuel > .02 ? 'Remaining wood needs a new source of heat' : 'Only cold ash remains');
   }
 }

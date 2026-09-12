@@ -72,7 +72,7 @@ export function updateStudyMotion(study) {
   motion.lights.forEach(({ light, intensity }, index) => {
     light.intensity = intensity * (1 + Math.sin(time * 6.2 + index * 2) * .065 + Math.sin(time * 10.7 + 1.3) * .035 + impact * .32) * (index===0 ? firePower : coalHeat);
   });
-  motion.coalMaterial.emissiveIntensity = motion.coalEmission * (1 + Math.sin(time * 2.3) * .065) * coalHeat * 1.7;
+  motion.coalMaterial.emissiveIntensity = motion.coalEmission;
   if(motion.coalMaterial.userData.time){
     motion.coalMaterial.userData.time.value=time;
     motion.coalMaterial.userData.heat.value=coalHeat;

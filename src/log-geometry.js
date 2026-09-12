@@ -7,10 +7,10 @@ const wrappedAngle = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
 
 // One profile drives trunk, caps, exposed wood and peeling bark. In particular,
 // cap rims never acquire a different displacement from the side of the log.
-export function createLogProfile({ radius, length, seed = 1, faceted = false }) {
+export function createLogProfile({ radius, length, seed = 1, faceted = false, fuelType = 'log' }) {
   const rand = random(seed);
-  return {
-    radius, length, faceted, phase: rand() * TAU, bend: (rand() - .5) * .52,
+  const profile = {
+    radius, length, faceted, fuelType, phase: rand() * TAU, bend: (rand() - .5) * .52,
     bendZ: (rand() - .5) * .46, oval: .065 + rand() * .055, twist: (rand() - .5) * .6,
     taper: .77 + rand() * .17, cutX: (rand() - .5) * .14, cutZ: (rand() - .5) * .14,
     knots: Array.from({ length: 2 }, () => ({ t: .18 + rand() * .66, angle: rand() * TAU, size: .10 + rand() * .06 })),
@@ -20,6 +20,19 @@ export function createLogProfile({ radius, length, seed = 1, faceted = false }) 
       curl: .025 + rand() * .025,
     })),
   };
+  if (fuelType === 'kindling') {
+    profile.patches = profile.patches.slice(0, 1);
+    for (const patch of profile.patches) { patch.width *= .65; patch.height *= .8; patch.curl *= .28; }
+    profile.knots = profile.knots.slice(0, 1);
+    profile.oval *= .7;
+  } else if (fuelType === 'small-log') {
+    for (const patch of profile.patches) patch.curl *= .65;
+  } else if (fuelType === 'stump') {
+    profile.bend *= .2; profile.bendZ *= .2; profile.twist *= .25;
+    profile.taper = .88 + rand() * .06;
+    profile.rootFlare = { strength: .22 + rand() * .06, lobes: 5, phase: rand() * TAU };
+  }
+  return profile;
 }
 
 export function sampleLogSurface(profile, angle, t, offset = 0, target = new THREE.Vector3()) {
@@ -39,7 +52,11 @@ export function sampleLogSurface(profile, angle, t, offset = 0, target = new THR
     const across = wrappedAngle(angle - patch.angle) / patch.width, along = (t - patch.t) / patch.height;
     shape -= .033 * Math.exp(-(across * across + along * along) * 2.3);
   }
-  const r = radius * (1 + (profile.taper - 1) * t) * clamp(shape, .82, 1.15);
+  // Stump roots widen toward the base, with distinct buttresses around its rim.
+  // Sampling this here keeps bark patches and both cap rims on the same shape.
+  const roots = profile.rootFlare;
+  const flare = roots ? (1 - t) ** 3 * (.13 + roots.strength * ((1 + Math.cos(angle * roots.lobes + roots.phase)) * .5) ** 3) : 0;
+  const r = radius * (1 + (profile.taper - 1) * t) * (clamp(shape, .82, 1.15) + flare);
   const x = Math.cos(angle) * r, z = Math.sin(angle) * r;
   const cutWeight = Math.pow(Math.abs(t * 2 - 1), 8);
   const y = (t - .5) * length + (x * profile.cutX + z * profile.cutZ) * cutWeight;

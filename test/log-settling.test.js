@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { createLogSettling, updateLogSettling } from '../src/log-settling.js';
 import { createBurnVisuals, updateBurnVisuals } from '../src/burn-visuals.js';
 import { BurnCycle } from '../src/lifecycle.js';
+import { createAshBed } from '../src/ash-bed.js';
 
 const definitions = [
   [[-1, .2, 0], [1, .2, 0], .2],
@@ -26,10 +27,10 @@ test('crossed logs rest on real lower fuel and sink to the bowl when support bur
   for (let frame = 2; frame <= 60; frame++) {
     updateLogSettling(state, cycle, frame / 60, floor); impacts.push(...state.impacts);
   }
-  assert.ok(Math.abs(state.logs[1].y - .012) < 1e-6);
+  assert.ok(Math.abs(state.logs[1].y - .011) < .002, 'the visible cylinder rests within the contact skin of the ground');
   assert.equal(impacts.length, 1);
   assert.ok(impacts[0].strength > .5);
-  assert.ok(Math.abs(impacts[0].position.x) < .01 && Math.abs(impacts[0].position.z) < .01);
+  assert.ok(Math.abs(impacts[0].position.x) < .01 && Math.abs(impacts[0].position.z) <= 1.01, 'impact lies on the contacting log, including an end-first landing');
 });
 
 test('new logs fall in real seconds regardless of burn speed and replacement fuel rests above older logs', () => {
@@ -75,6 +76,9 @@ test('hot weakened shells release periodically while cold intact logs remain sta
 function visualStudy() {
   const cycle = new BurnCycle(42);
   cycle.logs.forEach((fuel, i) => Object.assign(fuel, log(i), { phase: i < 2 ? 'burning' : 'queued', flame: i < 2 ? .8 : 0, shed: 0 }));
+  // This rendering fixture deliberately drives bulk uniforms by hand. Local
+  // combustion has its own surface/pose integration tests.
+  cycle.logs.forEach(fuel => { delete fuel.surface; });
   cycle.updateSummary();
   const defs = Array.from({ length: 7 }, (_, i) => definitions[i % 2]);
   const logMeshes = defs.map(def => {
@@ -93,7 +97,7 @@ function visualStudy() {
   coals.setMatrixAt(0, new THREE.Matrix4().makeTranslation(0, -.1, 0));
   const study = { cycle, animationTime: 0, logDefs: defs, logMeshes, volumes: [fire], groundHeight: floor,
     layers: { flames: new THREE.Group(), sparks: new THREE.Group() }, opaque: new THREE.Group(), coals,
-    motion: { steam: [] }, twigs: new THREE.Group(), ashBed: new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial()),
+    motion: { steam: [] }, twigs: new THREE.Group(), ashBed: createAshBed(new THREE.Mesh(new THREE.PlaneGeometry(), new THREE.MeshStandardMaterial())),
     flameSources: fire.material.uniforms.uSources.value.map(source => source.clone()) };
   study.burnVisuals = createBurnVisuals(study);
   return study;
@@ -132,7 +136,7 @@ test('stable fuel reuses depth and instance buffers while heat and flame uniform
   const study = visualStudy();
   assert.equal(updateBurnVisuals(study, true), true);
   const view = study.burnVisuals;
-  const buffers = [view.ash.instanceMatrix, study.coals.instanceMatrix, view.flakes.instanceMatrix,
+  const buffers = [study.ashBed.geometry.attributes.position, study.coals.instanceMatrix, view.flakes.instanceMatrix,
     view.impactEmbers.geometry.attributes.position, view.impactEmbers.geometry.attributes.aSize];
   const versions = buffers.map(buffer => buffer.version);
   for (let frame = 1; frame <= 15; frame++) {
@@ -149,19 +153,21 @@ test('stable fuel reuses depth and instance buffers while heat and flame uniform
   assert.equal(view.impactEmbers.visible, false);
 });
 
-test('coal changes, ash deposits, and falling fuel invalidate depth only when their geometry changes', () => {
+test('shrinking coal and falling wood invalidate depth, while growing ash only changes ground shading', () => {
   const study = visualStudy(); updateBurnVisuals(study, true);
   study.cycle.coalMass = .1;
   assert.equal(updateBurnVisuals(study), true);
   const coalVersion = study.coals.instanceMatrix.version;
   assert.equal(updateBurnVisuals(study), false);
   assert.equal(study.coals.instanceMatrix.version, coalVersion);
+  const ashState = study.ashBed.userData.ashState, initialAsh = ashState.amount;
+  const groundVersion = study.ashBed.geometry.attributes.position.version;
   study.animationTime = .1; study.cycle.ashDeposits[0] = .5;
-  assert.equal(updateBurnVisuals(study), true);
-  const ashVersion = study.burnVisuals.ash.instanceMatrix.version;
+  assert.equal(updateBurnVisuals(study), false, 'new ash cover does not change scene depth');
+  assert.ok(ashState.amount > initialAsh, 'persistent ash still visibly accumulates');
   study.animationTime = .2;
   assert.equal(updateBurnVisuals(study), false);
-  assert.equal(study.burnVisuals.ash.instanceMatrix.version, ashVersion);
+  assert.equal(study.ashBed.geometry.attributes.position.version, groundVersion);
   study.cycle.logs[0].phase = 'ash'; study.cycle.logs[0].wood = 0;
   study.animationTime += 1 / 30;
   assert.equal(updateBurnVisuals(study), true, 'removing a support changes depth immediately');
@@ -169,4 +175,167 @@ test('coal changes, ash deposits, and falling fuel invalidate depth only when th
   study.animationTime += 1 / 30;
   assert.equal(updateBurnVisuals(study), true, 'falling wood keeps depth current on every frame');
   assert.ok(study.logMeshes[1].position.y < previousY);
+});
+
+function simulate(state, cycle, seconds, height = floor, hz = 60, start = 0) {
+  const events = [];
+  for (let frame = 1; frame <= Math.round(seconds * hz); frame++) {
+    updateLogSettling(state, cycle, start + frame / hz, height);
+    events.push(...state.impacts);
+  }
+  return events;
+}
+
+function assertGroundClear(pose, height = floor) {
+  for (const point of pose.worldPoints) assert.ok(point.y >= height(point.x, point.z) - .002,
+    `${pose.fuelType} surface penetrates the soil at ${point.toArray()}`);
+}
+
+test('an older falling log can land on newer fuel after its former support disappears', () => {
+  const cycle = { logs: [log(0), { ...log(1), addedAt: 20 }] }, state = createLogSettling(definitions, 7);
+  updateLogSettling(state, cycle, 0, floor);
+  Object.assign(state.logs[0], { y: 1.3, sleeping: false, inFlight: true, fallFrom: 1.3 });
+  Object.assign(state.logs[1], { y: .006, sleeping: false, inFlight: false });
+  simulate(state, cycle, 2);
+  assert.ok(state.logs[0].supports.includes(1), 'contacts are symmetric rather than locked to arrival order');
+  assert.ok(state.logs[0].y > state.logs[1].y + .38);
+  state.logs.forEach(pose => assertGroundClear(pose));
+});
+
+test('off-center support creates a gravitational tipping torque and preserves the actual rolled orientation', () => {
+  const defs = [[[ -.7, .2, -.7], [-.7, .2, .7], .2], definitions[0]];
+  const cycle = { logs: [log(0), log(1)] }, state = createLogSettling(defs, 17);
+  updateLogSettling(state, cycle, 0, floor);
+  // Release a level log over the off-center support, rather than testing the
+  // equilibrium orientation chosen for a prepared initial pile.
+  state.logs[1].quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0));
+  state.logs[1].y = .412; state.logs[1].sleeping = false;
+  const initialY = state.logs[1].y;
+  simulate(state, cycle, 4);
+  const upper = state.logs[1];
+  assert.ok(upper.pitch < -.12, 'the unsupported end must tip down under gravity');
+  assert.ok(upper.y < initialY - .1);
+  assert.ok(Math.abs(upper.quaternion.length() - 1) < 1e-8);
+  assert.ok(new THREE.Vector3(0, 1, 0).applyQuaternion(upper.quaternion).distanceTo(upper.b.clone().sub(upper.a).normalize()) < 1e-8);
+  state.logs.forEach(pose => assertGroundClear(pose));
+});
+
+test('an offset parallel log rolls outward off the pile instead of following an inward target', () => {
+  const defs = [definitions[0], [[-1, .6, .22], [1, .6, .22], .2]];
+  const cycle = { logs: [log(0), log(1)] }, state = createLogSettling(defs, 6);
+  updateLogSettling(state, cycle, 0, floor);
+  const initialOrientation = state.logs[1].quaternion.clone();
+  simulate(state, cycle, 4);
+  const upper = state.logs[1];
+  assert.ok(upper.z > .48, 'its center moves away from the pile center');
+  assert.ok(Math.abs(upper.y - .011) < .015, 'it reaches the soil beside the supporting log');
+  assert.ok(upper.quaternion.angleTo(initialOrientation) > 1, 'rolling includes rotation about the wood axis');
+  assert.deepEqual(upper.supports, []);
+  state.logs.forEach(pose => assertGroundClear(pose));
+});
+
+test('terrain slope produces downhill rolling while a cold balanced pile stays perfectly asleep', () => {
+  const slope = (x, z) => -.2 + z * .15;
+  const cycle = { logs: [{ ...log(0), temperature: .03 }] }, state = createLogSettling([definitions[0]], 21);
+  updateLogSettling(state, cycle, 0, slope);
+  simulate(state, cycle, 4, slope);
+  assert.ok(state.logs[0].z < -.6);
+  assertGroundClear(state.logs[0], slope);
+  const flat = createLogSettling(definitions, 21), cold = { logs: [0, 1].map(slot => ({ ...log(slot), temperature: .03 })) };
+  updateLogSettling(flat, cold, 0, floor);
+  const before = flat.logs.map(p => [...p.position.toArray(), ...p.quaternion.toArray()]);
+  simulate(flat, cold, 4);
+  assert.deepEqual(flat.logs.map(p => [...p.position.toArray(), ...p.quaternion.toArray()]), before);
+  assert.ok(flat.logs.every(p => p.sleeping));
+});
+
+test('side collisions transfer momentum to both logs with no arrival-order stiffness', () => {
+  const defs = [definitions[0], [[-1, .2, .45], [1, .2, .45], .2]];
+  const cycle = { logs: [log(0), log(1)] }, state = createLogSettling(defs, 21);
+  updateLogSettling(state, cycle, 0, floor);
+  state.logs[0].linearVelocity.z = 2;
+  simulate(state, cycle, 2);
+  assert.ok(state.logs[1].z > .65, 'the struck body must move');
+  assert.ok(state.logs[0].z > .1 && state.logs[0].z < state.logs[1].z - .38, 'both bodies remain separated');
+  assert.ok(state.logs[0].linearVelocity.z < 1, 'contact and soil friction dissipate the incident energy');
+});
+
+test('fixed wall-clock substeps produce the same trajectories at 30 and 120 frames per second', () => {
+  const run = hz => {
+    const defs = [definitions[0], [[-1, .6, .22], [1, .6, .22], .2]];
+    const cycle = { logs: [log(0), log(1)] }, state = createLogSettling(defs, 6);
+    updateLogSettling(state, cycle, 0, floor); simulate(state, cycle, 3, floor, hz);
+    return state.logs.map(p => [...p.position.toArray(), ...p.quaternion.toArray()]);
+  };
+  const a = run(30), b = run(120);
+  a.forEach((values, index) => values.forEach((value, j) => assert.ok(Math.abs(value - b[index][j]) < 1e-8)));
+});
+
+test('fast thin kindling is caught by crossed wood without tunneling through it', () => {
+  const cycle = { logs: [log(0), { ...log(1), fuelType: 'kindling', addedAt: 10 }] };
+  const state = createLogSettling(definitions, 6);
+  updateLogSettling(state, cycle, 0, floor);
+  state.logs[1].linearVelocity.y = -25;
+  const events = simulate(state, cycle, .8);
+  assert.ok(state.logs[1].supports.includes(0));
+  assert.ok(state.logs[1].y > state.logs[0].y + .2);
+  assert.ok(events.some(event => event.slot === 1 && event.strength > .3));
+  state.logs.forEach(pose => assertGroundClear(pose));
+});
+
+test('char fracture creates bounded physical fragments and debits their finite mass from the donor', () => {
+  const cycle = { logs: [{ ...log(0), wood: .35, char: .22 }, { ...log(1), wood: .4, char: .18 }] };
+  const state = createLogSettling(definitions, 42);
+  updateLogSettling(state, cycle, 0, floor);
+  const initialMass = cycle.logs.reduce((sum, fuel) => sum + fuel.wood + fuel.char * 1.4, 0);
+  const events = simulate(state, cycle, 25);
+  assert.ok(state.fragments.length > 0 && state.fragments.length <= 12);
+  const mass = cycle.logs.reduce((sum, fuel) => sum + fuel.wood + fuel.char * 1.4, 0)
+    + state.fragments.reduce((sum, fragment) => sum + fragment.mass, 0) + (state.fragmentAsh + state.fragmentCoal) * 1.4;
+  assert.ok(Math.abs(mass - initialMass) < 1e-8, 'shell debris does not duplicate fuel mass');
+  assert.ok(events.some(event => event.kind === 'crumble'));
+  for (const fragment of state.fragments) {
+    assert.ok(fragment.radius > 0 && fragment.length > 0);
+    assert.ok(Math.abs(fragment.quaternion.length() - 1) < 1e-8);
+    assertGroundClear(fragment);
+  }
+  assert.ok(state.logs.some(pose => pose.fracture?.severity > 0 && pose.fracture.severity <= .6));
+});
+
+test('fragment heat and finite char follow accelerated burn time and transfer completely to ash', () => {
+  const cycle = { logs: [{ ...log(0), wood: .3, char: .24 }], time: 0, coalHeat: 0, ashMass: 0, coalMass: 0 };
+  const state = createLogSettling([definitions[0]], 42);
+  updateLogSettling(state, cycle, 0, floor);
+  simulate(state, cycle, 20);
+  assert.ok(state.fragments.length > 0);
+  const remaining = state.fragments.reduce((sum, fragment) => sum + fragment.remainingChar, 0);
+  const heat = state.fragments[0].heat;
+  updateLogSettling(state, cycle, 20.1, floor);
+  assert.equal(state.fragments[0].heat, heat, 'holding the burn clock does not thermally age moving debris');
+  assert.equal(cycle.fragmentChar, remaining);
+  // Fast playback ages combustion without accelerating gravity or allowing a
+  // detached ember to outlive a completed fire by ninety real-world seconds.
+  cycle.time = 1200;
+  updateLogSettling(state, cycle, 20.2, floor);
+  assert.equal(state.fragments.length, 0);
+  assert.equal(cycle.fragmentChar, 0); assert.equal(cycle.fragmentHeat, 0);
+  assert.ok(Math.abs(cycle.ashMass - remaining) < 1e-10, 'retired char becomes counted ash once');
+  updateLogSettling(state, cycle, 20.2, floor);
+  assert.ok(Math.abs(cycle.ashMass - remaining) < 1e-10, 'a paused redraw cannot duplicate residue');
+});
+
+test('settling and shell collisions dissipate energy without an explosive angular response', () => {
+  const defs = [definitions[0], [[-1, .6, .22], [1, .6, .22], .2]];
+  const cycle = { logs: [{ ...log(0), wood: .25, char: .25 }, { ...log(1), wood: .3, char: .2 }] };
+  const state = createLogSettling(defs, 42);
+  updateLogSettling(state, cycle, 0, floor);
+  for (let frame = 1; frame <= 1500; frame++) {
+    updateLogSettling(state, cycle, frame / 60, floor);
+    for (const pose of [...state.logs, ...state.fragments]) {
+      assert.ok(pose.position.toArray().every(Number.isFinite));
+      assert.ok(pose.linearVelocity.length() < 8, 'a sub-meter fall must not create an unbounded launch');
+      assert.ok(pose.angularVelocity.length() < 40, 'small shell contacts must not explode angular energy');
+    }
+  }
+  assert.ok(state.fragments.length > 0);
 });

@@ -5,18 +5,18 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { woodTextures, cloudTexture, random } from './textures.js';
 import { createVolume } from './volume.js';
 import { addStylizedFire } from './stylized.js';
 import { createHybridFire } from './hybrid-fire.js';
 import { createMotionState, updateStudyMotion } from './motion.js';
 import { BurnCycle, SPEEDS } from './lifecycle.js';
-import { addDirtClearing, groundHeight, seatOnGround } from './ground.js';
+import { addDirtClearing, groundHeight } from './ground.js';
 import { addStoneRing } from './rocks.js';
-import { createCoalMaterial } from './coals.js';
-import { burningMaterial, createBurnVisuals, updateBurnVisuals } from './burn-visuals.js';
-import { createLogMesh, createBarkDetails, sampleLogSurface } from './log-geometry.js';
+import { createCoalBed } from './coal-bed.js';
+import { createAshBed, updateAshBed } from './ash-bed.js';
+import { createBurnVisuals, updateBurnVisuals } from './burn-visuals.js';
+import { createSceneFuelMesh, disposeFuelMesh } from './fuel-mesh.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -142,8 +142,8 @@ export class BonfireViewer {
   this.current.cycle.reset(seed);this.current.animationTime=0;this.lastTick=null;
   this.refreshBurn();
  }
- addLog() {
-  if(this.current?.cycle?.addLog())this.refreshBurn();
+ addLog(fuelType) {
+  if(this.current?.cycle?.addLog(fuelType))this.refreshBurn();
  }
  refreshBurn() {
   updateBurnVisuals(this.current,true);updateStudyMotion(this.current);
@@ -219,7 +219,8 @@ export class BonfireViewer {
   const dirtGeo=new THREE.CylinderGeometry(2.32,2.5,.16,mode===1?11:70);
   if(mode===0||mode===4){const p=dirtGeo.attributes.position;for(let i=0;i<p.count;i++){const a=Math.atan2(p.getZ(i),p.getX(i)),f=1+Math.sin(a*7)*.024+Math.sin(a*13)*.014;p.setX(i,p.getX(i)*f);p.setZ(i,p.getZ(i)*f);}dirtGeo.computeVertexNormals();}
   const dirt=mesh(opaque,dirtGeo,dirtMat,V(0,-.09,0));
-  if(hybrid){dirt.visible=false;addDirtClearing(opaque,config.seed);}
+  let ashSurface=dirt;
+  if(hybrid){dirt.visible=false;ashSurface=addDirtClearing(opaque,config.seed);}
   if(mode===3)dirt.material=new THREE.MeshStandardMaterial({color:'#121820',roughness:.23,metalness:.8});
   const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':'#9cadc6',mode===2&&!hybrid?'#827f72':'#211915',hybrid?.14:mode===2?2.3:.65);scene.add(ambient);
   const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':'#b2c9e4',hybrid?.36:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=!hybrid;
@@ -244,44 +245,14 @@ export class BonfireViewer {
    [[.85,.52,.95],[-.22,1.62,-.12],.22],
   ];
   if(mode===4){for(let i=3;i<logDefs.length;i++){logDefs[i][0][1]*=.8;logDefs[i][1][1]*=.58;}}
-  const flakeGeometries=[],logMeshes=[];
-  const ashMat=new THREE.MeshStandardMaterial({color:mode===2?'#dbd5c7':'#888379',roughness:1,flatShading:true});
+  const cycle=hybrid?new BurnCycle(8108):null,logMeshes=[];
+  const fuelMaterials={barkMat,endMat,exposedMat};
+  const buildFuel=(li,fuel)=>createSceneFuelMesh({definition:logDefs[li],fuelType:fuel?.fuelType,seed:hybrid?cycle.seed+fuel.id*7919:config.seed+li*7919,mode,hybrid,...(hybrid?{}:{rand})},fuelMaterials);
   for(let li=0;li<logDefs.length;li++) {
-    const [aa,bb,radius]=logDefs[li],a=new THREE.Vector3(...aa),b=new THREE.Vector3(...bb);
-    const dir=b.clone().sub(a),length=dir.length();
-    const burnUniforms={uWood:{value:1},uChar:{value:0},uHeat:{value:0}};
-    const materials=hybrid?[burningMaterial(barkMat,burnUniforms),burningMaterial(endMat,burnUniforms,true)]:[barkMat,endMat];
-    const log=createLogMesh({radius,length,seed:config.seed+li*7919,faceted:mode===1},...materials);
-    const geo=log.geometry,profile=geo.userData.profile;
-    log.position.copy(a).lerp(b,.5);log.castShadow=true;log.receiveShadow=true;opaque.add(log);
-    log.quaternion.setFromUnitVectors(UP,dir.clone().normalize());
-    const barkDetails=createBarkDetails(profile),exposedMaterial=hybrid?burningMaterial(exposedMat,burnUniforms,true):exposedMat;
-    mesh(log,barkDetails.exposed,exposedMaterial);
-    mesh(log,barkDetails.peeling,[materials[0],exposedMaterial]);
-    log.userData.length=length;log.userData.burnUniforms=burnUniforms;logMeshes.push(log);
-    log.updateMatrixWorld();
-    log.userData.baseInverse=log.matrixWorld.clone().invert();
-    if(mode===2&&!hybrid){
-      const outline=new THREE.LineSegments(new THREE.EdgesGeometry(geo,27),new THREE.LineBasicMaterial({color:'#342e29',transparent:true,opacity:.85}));log.add(outline);
-      for(let j=0;j<17;j++){
-        const theta=j/17*Math.PI*2,points=[];
-        for(let k=0;k<=26;k++){const t=k/26;points.push(sampleLogSurface(profile,theta+Math.sin(t*14+j)*.007,t,.004));}
-        line(log,points,'#342e25',.58);
-      }
-    }
-    const localChips=[];
-    for(let k=0;k<(mode===1?10:45);k++){
-      const theta=rand()*Math.PI*2,y=(rand()-.5)*length*.97;
-      const chip=new THREE.DodecahedronGeometry(1,0);
-      const obj=new THREE.Object3D();obj.position.copy(sampleLogSurface(profile,theta,y/length+.5));
-      obj.scale.set(.022+rand()*.025,.025+rand()*.07,.012+rand()*.014);obj.rotation.set(0,-theta,rand()*.4);
-      obj.updateMatrix();chip.applyMatrix4(obj.matrix);
-      if(hybrid)localChips.push(chip);else{chip.applyMatrix4(log.matrixWorld);flakeGeometries.push(chip);}
-    }
-    if(hybrid){
-      log.userData.charChips=mesh(log,mergeGeometries(localChips),new THREE.MeshStandardMaterial({color:'#534d42',roughness:1,flatShading:true}));
-      localChips.forEach(g=>g.dispose());
-    }
+    const [aa,bb]=logDefs[li],a=new THREE.Vector3(...aa),b=new THREE.Vector3(...bb);
+    const dir=b.clone().sub(a);
+    const log=buildFuel(li,cycle?.logs[li]);opaque.add(log);logMeshes.push(log);
+    if(hybrid)log.userData.visualKey=`${cycle.seed}:${cycle.resetSerial}:${cycle.logs[li].id}:${cycle.logs[li].fuelType}`;
     if(li<3||hybrid){
       const end=a.clone().addScaledVector(dir.clone().normalize(),-.018);
       for(let k=0;k<15;k++){
@@ -293,28 +264,11 @@ export class BonfireViewer {
       }
     }
   }
-  if(flakeGeometries.length)mesh(opaque,mergeGeometries(flakeGeometries),new THREE.MeshStandardMaterial({color:mode===2?'#746d5f':mode===4?'#a29b88':'#39362f',roughness:1,flatShading:true}));
-  flakeGeometries.forEach(g=>g.dispose());
-  const coalGeo=new THREE.DodecahedronGeometry(1,mode===1?0:1);
-  const coalMat=createCoalMaterial(mode,hybrid);
-  const coals=new THREE.InstancedMesh(coalGeo,coalMat,210),obj=new THREE.Object3D();
-  const ashGeo=new THREE.DodecahedronGeometry(1,0),ash=new THREE.InstancedMesh(ashGeo,ashMat,120);
-  for(let i=0;i<210;i++){
-    const a=rand()*Math.PI*2,r=Math.sqrt(rand())*1.73;
-    obj.position.set(Math.cos(a)*r,.018+rand()*.11,Math.sin(a)*r);
-    obj.rotation.set(rand()*3,rand()*3,rand()*3);
-    const sz=.032+rand()*.105;obj.scale.set(sz,sz*(.4+rand()*.55),sz*(.7+rand()));
-    if(hybrid)seatOnGround(obj,coalGeo);else obj.updateMatrix();
-    coals.setMatrixAt(i,obj.matrix);
-    const c=new THREE.Color().setHSL(.018+rand()*.06,.8, .07+rand()*.26);coals.setColorAt(i,c);
-    if(i<120){
-      obj.position.y+=sz*.45;obj.scale.multiplyScalar(.83);obj.scale.y*=.27;
-      if(hybrid){obj.rotation.x*=.12;obj.rotation.z*=.12;seatOnGround(obj,ashGeo,groundHeight,.002);}
-      else obj.updateMatrix();
-      ash.setMatrixAt(i,obj.matrix);
-    }
-  }
-  coals.castShadow=true;coals.receiveShadow=true;opaque.add(coals,ash);
+  const coals=createCoalBed({seed:config.seed,mode,animated:hybrid,groundHeight:hybrid?groundHeight:()=>0});
+  const coalMat=coals.material,obj=new THREE.Object3D();
+  const ash=createAshBed(ashSurface);
+  opaque.add(coals);
+  if(!hybrid)updateAshBed(ash,{seed:config.seed,resetSerial:0,time:0,coalMass:.5,ashMass:.2},coals,0,true);
   addStoneRing(opaque,{seed:config.seed,mode,hybrid});
   const debris=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),new THREE.MeshStandardMaterial({color:mode===2?'#777267':'#777067',roughness:1}),310);
   for(let i=0;i<310;i++){
@@ -371,7 +325,18 @@ export class BonfireViewer {
   if(config.animated)study.motion=createMotionState(layers,sparks,[light,coreLight],coalMat,barkMat);
   if(hybrid){
     study.flameSources=volumes.find(v=>v.material.uniforms.uSources).material.uniforms.uSources.value.map(s=>s.clone());
-    study.cycle=new BurnCycle(8108);study.burnVisuals=createBurnVisuals(study);
+    study.cycle=cycle;
+    study.syncFuelMeshes=()=>{
+      let changed=false;
+      for(const fuel of cycle.logs){
+        const key=`${cycle.seed}:${cycle.resetSerial}:${fuel.id}:${fuel.fuelType}`,old=logMeshes[fuel.slot];
+        if(old.userData.visualKey===key)continue;
+        const replacement=buildFuel(fuel.slot,fuel);replacement.userData.visualKey=key;
+        disposeFuelMesh(old);opaque.add(replacement);logMeshes[fuel.slot]=replacement;changed=true;
+      }
+      return changed;
+    };
+    study.burnVisuals=createBurnVisuals(study);
     updateBurnVisuals(study,true);updateStudyMotion(study);
   }
   return study;

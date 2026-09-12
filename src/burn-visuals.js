@@ -1,48 +1,29 @@
 import * as THREE from 'three';
 import { random } from './textures.js';
 import { createLogSettling, updateLogSettling } from './log-settling.js';
+import { getFuelType } from './fuel-types.js';
+import { sampleLogSurface as sampleBurnSurface } from './log-combustion.js';
+import { applyLogFracture, createCharFragments } from './log-damage.js';
+import { updateCoalBed } from './coal-bed.js';
+import { updateAshBed } from './ash-bed.js';
 
 const up = new THREE.Vector3(0, 1, 0), axis = new THREE.Vector3(), center = new THREE.Vector3();
 const endA = new THREE.Vector3(), endB = new THREE.Vector3(), root = new THREE.Vector3();
 const obj = new THREE.Object3D(), color = new THREE.Color();
 const clamp = THREE.MathUtils.clamp;
 
-export function burningMaterial(base, uniforms, cap = false) {
-  const material = base.clone();
-  material.onBeforeCompile = shader => {
-    Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = 'varying vec3 vBurnPosition;\n' + shader.vertexShader;
-    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvBurnPosition=position;');
-    shader.fragmentShader = `varying vec3 vBurnPosition;uniform float uWood,uHeat,uChar;
-      float burnHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-      float burnNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(burnHash(i),burnHash(i+vec2(1,0)),f.x),mix(burnHash(i+vec2(0,1)),burnHash(i+vec2(1)),f.x),f.y);}
-    ` + shader.fragmentShader;
-    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
-      float angle=atan(vBurnPosition.z,vBurnPosition.x);
-      float grain=burnNoise(vec2(angle*19.,vBurnPosition.y*3.5));
-      float fineGrain=sin(angle*53.+sin(vBurnPosition.y*12.)*.6)*.06;
-      float charFront=clamp((1.-uWood)*1.8,0.,1.);
-      float burnMask=smoothstep(grain*.6,grain*.6+.28,charFront);
-      vec3 fresh=${cap ? 'diffuseColor.rgb*1.4' : 'mix(vec3(.105,.065,.033),vec3(.38,.27,.15),grain+fineGrain)'};
-      diffuseColor.rgb=mix(fresh,diffuseColor.rgb*(.22+uWood*.55),burnMask);
-      float ashDust=(1.-smoothstep(0.,.055,uWood))*(1.-smoothstep(0.,.10,uChar));
-      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.29,.275,.24),ashDust*.65);
-    `);
-    shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance*=uHeat*(.08+burnMask*2.5);');
-  };
-  material.customProgramCacheKey = () => `burn-log-${cap ? 'end' : 'bark'}-1`;
-  return material;
-}
+export { burningMaterial } from './log-burning-material.js';
 
 export function createBurnVisuals(study) {
   const rand = random(4408), particles = [];
-  const ash = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: '#b1ab9b', roughness: 1, flatShading: true }), 7 * 90);
-  ash.instanceMatrix.setUsage(THREE.DynamicDrawUsage); ash.receiveShadow = true; ash.frustumCulled = false;
-  const ashSeeds = Array.from({ length: 7 * 90 }, () => [rand(), rand() - .5, .02 + rand() * .05, rand()]);
+  const burnMap = new THREE.DataTexture(new Float32Array(8 * 35 * 4), 8, 35, THREE.RGBAFormat, THREE.FloatType);
+  burnMap.minFilter = burnMap.magFilter = THREE.LinearFilter; burnMap.wrapS = THREE.RepeatWrapping;
+  burnMap.generateMipmaps = false;
   const flakes = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: '#555048', emissive: '#ff4008', emissiveIntensity: .9, roughness: 1, flatShading: true }), 80);
   flakes.instanceMatrix.setUsage(THREE.DynamicDrawUsage); flakes.frustumCulled = false;
   for (let i = 0; i < 80; i++) { obj.scale.setScalar(0); obj.updateMatrix(); flakes.setMatrixAt(i, obj.matrix); flakes.setColorAt(i, new THREE.Color('#777269')); }
-  study.opaque.add(ash, flakes);
+  study.opaque.add(flakes);
+  const fragments = createCharFragments(); study.opaque.add(fragments);
   const emberGeometry = new THREE.BufferGeometry();
   emberGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(320 * 3), 3).setUsage(THREE.DynamicDrawUsage));
   emberGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(320 * 3), 3).setUsage(THREE.DynamicDrawUsage));
@@ -57,10 +38,10 @@ export function createBurnVisuals(study) {
   const impactEmbers = new THREE.Points(emberGeometry, emberMaterial); impactEmbers.frustumCulled = false;
   impactEmbers.visible = false; flakes.visible = false;
   study.layers.sparks.add(impactEmbers);
-  return { ash, ashSeeds, flakes, particles, impactEmbers, embers: [], emberCursor: 0,
-    coalMatrices: study.coals.instanceMatrix.array.slice(), cursor: 0, lastShed: Array(7).fill(0), seed: null, rand, lastGeometry: -1,
+  return { flakes, fragments, fragmentTransforms: [], particles, impactEmbers, burnMap, embers: [], emberCursor: 0,
+    coalMatrices: study.coals.instanceMatrix.array.slice(), cursor: 0, lastShed: Array(7).fill(0), seed: null, rand,
     settling: null, impactEvents: [], impactSerial: 0, resetToken: null, impactPulse: 0,
-    logTransforms: [], ashStates: [], coalScale: null };
+    logTransforms: [], coalScale: null };
 }
 
 function emitImpact(view, impact, time, cycle) {
@@ -68,7 +49,9 @@ function emitImpact(view, impact, time, cycle) {
   view.impactEvents.push(event);
   if (view.impactEvents.length > 16) view.impactEvents.shift();
   // Cold wood still lands, but only a hot bed throws incandescent embers.
-  const heat = Math.max(impact.heat, cycle.coalHeat);
+  const { x, y, z } = impact.position;
+  const bedExposure = Math.exp(-(x * x + z * z) / 1.65) * Math.exp(-Math.max(0, y - .3));
+  const heat = Math.max(impact.heat ?? 0, cycle.coalHeat * bedExposure);
   if (heat < .12) return;
   const count = Math.round((22 + impact.strength * 82) * Math.min(1, heat * 1.5));
   for (let i = 0; i < count; i++) {
@@ -111,47 +94,67 @@ export function updateBurnVisuals(study, force = false) {
   const cycle = study.cycle, view = study.burnVisuals, t = study.animationTime;
   if (!cycle || !view) return false;
   const groundHeight = study.groundHeight || (() => 0);
-  let opaqueChanged = force, ashChanged = false;
+  let opaqueChanged = (study.syncFuelMeshes?.() ?? false) || force;
   const resetToken = `${cycle.seed}:${cycle.resetSerial}`;
   if (view.resetToken !== resetToken) {
     view.resetToken = resetToken; view.seed = cycle.seed; view.particles.length = 0; view.embers.length = 0;
-    view.impactEvents.length = 0; view.impactPulse = 0; view.lastShed = cycle.logs.map(log => log.shed); view.lastGeometry = -1;
+    view.impactEvents.length = 0; view.impactPulse = 0; view.lastShed = cycle.logs.map(log => log.shed);
     view.settling = createLogSettling(study.logDefs, cycle.seed);
-    view.logTransforms.length = 0; view.ashStates.length = 0; view.coalScale = null;
+    view.logTransforms.length = 0; view.coalScale = null;
+    view.fragmentTransforms.length = 0;
     opaqueChanged = true;
   }
-  const updateAsh = force || t - view.lastGeometry > 1 / 15;
-  if (updateAsh) view.lastGeometry = t;
   const fire = study.volumes.find(volume => volume.material.uniforms.uSources);
   const fu = fire.material.uniforms;
-  fu.uIntensity.value = clamp(cycle.flame / 3.8, 0, 1);
+  const visibleFlame = cycle.visibleFlame ?? cycle.flame;
+  fu.uIntensity.value = clamp(visibleFlame / 3.8, 0, 1);
+  if (fu.uCoreHeat) fu.uCoreHeat.value = cycle.coreHeat;
+  if (fu.uFreshFuel) fu.uFreshFuel.value = clamp(cycle.logs.reduce((sum, log) => sum + (log.visibleFlame ?? log.flame) * clamp((log.wood - .2) / .8, 0, 1), 0) / Math.max(.1, visibleFlame), 0, 1);
+  if (fu.uBurnMap) fu.uBurnMap.value = view.burnMap;
+  if (fu.uLocalizedBurn) fu.uLocalizedBurn.value = cycle.logs.some(log => log.surface) ? 1 : 0;
   for (const volume of study.volumes) if (volume.material.uniforms.uSmokeAmount) volume.material.uniforms.uSmokeAmount.value = cycle.smoke;
   study.layers.flames.children.forEach(mesh => {
     const slot = mesh.userData.logSlot;
-    if (slot !== undefined) mesh.visible = cycle.logs[slot].flame > .035 && cycle.logs[slot].phase !== 'queued';
+    // Volumetric contact flames replace the thin surface ribbon cards in living studies.
+    if (slot !== undefined) mesh.visible = false;
     if (mesh.userData.twigFlame) mesh.visible = cycle.time < 420 && cycle.flame > .15;
     if (mesh.material?.uniforms?.uLife) mesh.material.uniforms.uLife.value = slot !== undefined ? cycle.logs[slot].flame : Math.min(1, cycle.flame);
   });
+  view.settling.profiles = study.logMeshes.map(mesh => mesh.geometry?.userData.profile);
   updateLogSettling(view.settling, cycle, t, groundHeight);
   for (const impact of view.settling.impacts) emitImpact(view, impact, t, cycle);
+  cycle.setLogPoses?.(view.settling.logs);
   for (let i = 0; i < cycle.logs.length; i++) {
     const log = cycle.logs[i], mesh = study.logMeshes[i], def = study.logDefs[i], pose = view.settling.logs[i];
     if (mesh.userData.fuelId !== log.id) { mesh.userData.fuelId = log.id; view.lastShed[i] = log.shed; }
-    const live = pose.live, mass = log.wood + log.char * 1.4, radiusScale = pose.radius / def[2];
+    const type = getFuelType(log.fuelType);
+    const live = pose.live, mass = log.wood + log.char * 1.4, radiusScale = pose.radius / (mesh.userData.radius ?? def[2]);
+    if (applyLogFracture(mesh, pose.fracture)) opaqueChanged = true;
     if (mesh.visible !== live) opaqueChanged = true;
     mesh.visible = live;
-    const transform = [pose.a.x, pose.a.y, pose.a.z, pose.b.x, pose.b.y, pose.b.z, radiusScale, pose.length];
-    const logMoved = force || changedValues(view.logTransforms[i], transform);
+    const transform = [pose.a.x, pose.a.y, pose.a.z, pose.b.x, pose.b.y, pose.b.z, radiusScale, pose.length, ...(pose.quaternion?.toArray() ?? [])];
+    const logMoved = opaqueChanged || changedValues(view.logTransforms[i], transform);
     if (logMoved) {
       view.logTransforms[i] = transform;
       axis.subVectors(pose.b, pose.a).normalize(); center.copy(pose.a).lerp(pose.b, .5);
-      mesh.position.copy(center); mesh.quaternion.setFromUnitVectors(up, axis);
+      mesh.position.copy(center);
+      if (pose.quaternion) mesh.quaternion.copy(pose.quaternion); else mesh.quaternion.setFromUnitVectors(up, axis);
       mesh.scale.set(radiusScale, pose.length / mesh.userData.length, radiusScale);
       mesh.updateMatrixWorld();
       if (live) opaqueChanged = true;
     }
     const u = mesh.userData.burnUniforms;
     u.uWood.value = log.wood; u.uChar.value = log.char; u.uHeat.value = log.phase === 'queued' ? 0 : log.temperature;
+    if (u.uBurnMap) {
+      u.uBurnMap.value = view.burnMap; u.uBurnSlot.value = i; u.uBurnTime.value = t;
+      u.uLocalizedBurn.value = log.surface ? 1 : 0;
+    }
+    if (log.surface) for (let k = 0; k < 40; k++) {
+      const patch = log.surface.patches[k], offset = (i * 40 + k) * 4, data = view.burnMap.image.data;
+      data[offset] = live ? patch.temperature : 0; data[offset + 1] = patch.wood; data[offset + 2] = patch.char; data[offset + 3] = live ? patch.flame : 0;
+    }
+    if (fu.uLogBasisX) fu.uLogBasisX.value[i].set(1, 0, 0).applyQuaternion(mesh.quaternion);
+    if (fu.uLogBasisZ) fu.uLogBasisZ.value[i].set(0, 0, 1).applyQuaternion(mesh.quaternion);
     const chipsVisible = log.wood < .84;
     if (live && mesh.userData.charChips.visible !== chipsVisible) opaqueChanged = true;
     mesh.userData.charChips.visible = chipsVisible;
@@ -159,37 +162,25 @@ export function updateBurnVisuals(study, force = false) {
     const a = endA.set(0, -mesh.userData.length * .5, 0).applyMatrix4(mesh.matrixWorld);
     const b = endB.set(0, mesh.userData.length * .5, 0).applyMatrix4(mesh.matrixWorld);
     for (const ribbon of study.layers.flames.children) if (logMoved && ribbon.userData.logSlot === i) {
-      ribbon.matrixAutoUpdate = false; ribbon.matrix.copy(mesh.matrixWorld).multiply(mesh.userData.baseInverse); ribbon.matrixWorldNeedsUpdate = true;
+      ribbon.matrixAutoUpdate = false;
+      ribbon.matrix.copy(mesh.matrixWorld).scale(new THREE.Vector3(type.radiusScale, type.lengthScale, type.radiusScale)).multiply(mesh.userData.baseInverse);
+      ribbon.matrixWorldNeedsUpdate = true;
     }
     fu.uLogA.value[i].set(a.x, a.y, a.z, pose.radius);
     fu.uLogB.value[i].set(b.x, b.y, b.z, pose.radius * .88);
-    fu.uLogHeat.value[i] = live ? log.flame : 0;
+    fu.uLogHeat.value[i] = live ? (log.visibleFlame ?? log.flame) : 0;
     for (let j = i; j < 12; j += 7) {
       const original = study.flameSources[j], along = j < 7 ? .50 : .28;
       root.copy(a).lerp(b, along);
-      const strength = live ? log.flame : 0;
-      const height = original.w * (.14 + .86 * Math.sqrt(strength)) * (.5 + .5 * Math.sqrt(Math.min(1, mass)));
+      const surfaceUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion.clone().invert());
+      const angle = Math.atan2(surfaceUp.z, surfaceUp.x);
+      const patch = log.surface ? sampleBurnSurface(log, along, angle) : null;
+      const strength = live ? (patch?.flame ?? log.visibleFlame ?? log.flame) * Math.min(1, type.heatOutput) : 0;
+      const height = original.w * (.14 + .86 * Math.sqrt(strength)) * (.5 + .5 * Math.sqrt(Math.min(1, mass))) * Math.sqrt(type.heatOutput);
       const rootY = root.y + pose.radius * .45;
       fu.uSources.value[j].set(root.x, rootY, root.z, Math.min(height, 4.45 - rootY)); fu.uFuel.value[j] = strength;
     }
     for (const sprite of study.motion.steam) if (sprite.userData.steam.log === i) sprite.userData.steam.origin.copy(a);
-    if (updateAsh) {
-      const ashAmount = Math.max(cycle.ashDeposits[i], log.phase === 'queued' ? 0 : log.phase === 'ash' ? 1 : clamp((1 - log.wood - log.char) * .88, 0, 1));
-      const ashCount = clamp(Math.ceil(ashAmount * 90), 0, 90), previous = view.ashStates[i];
-      const ashState = [ashCount, a.x, a.z, b.x, b.z];
-      const ashMoved = force || changedValues(previous, ashState);
-      const updateCount = !previous || force ? 90 : Math.max(ashCount, previous[0]);
-      if (ashMoved) view.ashStates[i] = ashState;
-      for (let j = 0; ashMoved && j < updateCount; j++) {
-        const index = i * 90 + j, [along, side, sz, spin] = view.ashSeeds[index];
-        obj.position.copy(a).lerp(b, along); obj.position.x += side * .5; obj.position.z += Math.sin(spin * 20) * .19;
-        obj.position.y = groundHeight(obj.position.x, obj.position.z) + .012 + spin * .018;
-        obj.rotation.set(spin * 3, spin * 5, spin);
-        obj.scale.set(sz * 1.9, sz * .32, sz * 1.7).multiplyScalar(j < ashCount ? 1 : 0);
-        obj.updateMatrix(); view.ash.setMatrixAt(index, obj.matrix);
-      }
-      if (ashMoved && updateCount > 0) { ashChanged = true; opaqueChanged = true; }
-    }
     if (log.shed - view.lastShed[i] > .001 && live) {
       view.lastShed[i] = log.shed;
       for (let k = 0; k < 2; k++) {
@@ -198,7 +189,22 @@ export function updateBurnVisuals(study, force = false) {
       }
     }
   }
-  if (ashChanged) view.ash.instanceMatrix.needsUpdate = true;
+  view.burnMap.needsUpdate = true;
+  const fragments = view.settling.fragments || [];
+  if (view.fragments.count !== fragments.length) opaqueChanged = true;
+  view.fragments.count = fragments.length;
+  let fragmentsChanged = false;
+  for (let i = 0; i < fragments.length; i++) {
+    const fragment = fragments[i], transform = [...fragment.position.toArray(), ...fragment.quaternion.toArray(), fragment.radius, fragment.length];
+    if (changedValues(view.fragmentTransforms[i], transform)) {
+      view.fragmentTransforms[i] = transform; fragmentsChanged = true;
+      obj.position.copy(fragment.position); obj.quaternion.copy(fragment.quaternion); obj.scale.set(fragment.radius, fragment.length, fragment.radius);
+      obj.updateMatrix(); view.fragments.setMatrixAt(i, obj.matrix);
+    }
+    view.fragments.geometry.attributes.instanceHeat.setX(i, fragment.heat);
+  }
+  if (fragmentsChanged) { view.fragments.instanceMatrix.needsUpdate = true; opaqueChanged = true; }
+  if (fragments.length) view.fragments.geometry.attributes.instanceHeat.needsUpdate = true;
   const coalScale = .28 + .72 * Math.sqrt(Math.min(1, cycle.coalMass / .5));
   const coalsChanged = force || view.coalScale !== coalScale;
   for (let i = 0; coalsChanged && i < study.coals.count; i++) {
@@ -232,6 +238,7 @@ export function updateBurnVisuals(study, force = false) {
     spark.position.copy(spark.userData.twigGlowOrigin).multiply(study.twigs.scale).add(study.twigs.position);
     spark.scale.y = 2.2 * twigScale;
   }
-  study.ashBed.material.color.set('#dbd5c7').multiplyScalar(.7 + Math.min(.3, cycle.ashMass * .12));
+  updateCoalBed(study.coals, cycle, force);
+  updateAshBed(study.ashBed, cycle, study.coals, t, force);
   return opaqueChanged;
 }

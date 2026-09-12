@@ -1,177 +1,549 @@
 import * as THREE from 'three';
+import { getFuelType } from './fuel-types.js';
+import { PLANK_ASPECT_RATIO, sampleFuelSurface } from './fuel-geometry.js';
+import { removeCharFromSurface } from './log-combustion.js';
 
 const clamp = THREE.MathUtils.clamp;
 const massOf = log => Math.max(0, log.wood + log.char * 1.4);
 const active = log => log.phase !== 'queued' && log.phase !== 'ash';
+const UP = new THREE.Vector3(0, 1, 0);
+const GRAVITY = 5.8, STEP = 1 / 120, SKIN = .012, CONTACT_SLOP = .001;
+const MAX_FRAGMENTS = 12;
 const randomFor = seed => () => {
   seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
   return seed / 4294967296;
 };
 
-export function createLogSettling(definitions, seed = 1) {
-  return { definitions, random: randomFor(seed), logs: [], lastTime: null, nextCollapse: 8 + (seed % 7), impacts: [] };
+export function createLogSettling(definitions, seed = 1, profiles = []) {
+  return { definitions, profiles, random: randomFor(seed), logs: [], fragments: [], nextFragment: 0,
+    lastTime: null, lastBurnTime: null, fragmentAsh: 0, fragmentCoal: 0, accumulator: 0, physicsTime: 0,
+    nextCollapse: 8 + (seed % 7), impacts: [] };
 }
 
-function endpoints(pose) {
-  const half = pose.length * .5, horizontal = Math.cos(pose.pitch) * half;
-  const dx = Math.cos(pose.yaw) * horizontal, dz = Math.sin(pose.yaw) * horizontal, dy = Math.sin(pose.pitch) * half;
-  pose.a.set(pose.x - dx, pose.y - dy, pose.z - dz);
-  pose.b.set(pose.x + dx, pose.y + dy, pose.z + dz);
-}
-
-// Closest points on the two projected rods. The vertical constraint then uses
-// the actual height of the lower rod at that contact, not its original height.
-function crossing(a, b, c, d) {
-  const ux = b.x - a.x, uz = b.z - a.z, vx = d.x - c.x, vz = d.z - c.z;
-  const wx = a.x - c.x, wz = a.z - c.z;
-  const aa = ux * ux + uz * uz, bb = ux * vx + uz * vz, cc = vx * vx + vz * vz;
-  const dd = ux * wx + uz * wz, ee = vx * wx + vz * wz;
-  const denominator = aa * cc - bb * bb;
-  let t = denominator > 1e-8 ? clamp((bb * ee - cc * dd) / denominator, 0, 1) : .5;
-  let s = cc > 1e-8 ? clamp((bb * t + ee) / cc, 0, 1) : 0;
-  t = aa > 1e-8 ? clamp((bb * s - dd) / aa, 0, 1) : 0;
-  s = cc > 1e-8 ? clamp((bb * t + ee) / cc, 0, 1) : 0;
-  return { t, s, distance: Math.hypot(a.x + ux * t - c.x - vx * s, a.z + uz * t - c.z - vz * s) };
-}
-
-function constraints(pose, lowerLogs, groundHeight) {
-  const contacts = [], radialHeight = pose.radius * Math.cos(pose.pitch);
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10, x = THREE.MathUtils.lerp(pose.a.x, pose.b.x, t), z = THREE.MathUtils.lerp(pose.a.z, pose.b.z, t);
-    contacts.push({ t, height: groundHeight(x, z) + radialHeight + .012, slot: -1 });
+// The render mesh and contacts share a local +Y axis and the complete quaternion.
+// Unlike a yaw/pitch reconstruction this preserves a plank's wide face as it rolls.
+function syncPose(pose) {
+  pose.position.set(pose.x, pose.y, pose.z);
+  pose.axis.set(0, 1, 0).applyQuaternion(pose.quaternion);
+  pose.sectionX.set(1, 0, 0).applyQuaternion(pose.quaternion);
+  pose.sectionZ.set(0, 0, 1).applyQuaternion(pose.quaternion);
+  pose.a.copy(pose.axis).multiplyScalar(-pose.length * .5).add(pose.position);
+  pose.b.copy(pose.axis).multiplyScalar(pose.length * .5).add(pose.position);
+  pose.yaw = Math.atan2(pose.axis.z, pose.axis.x);
+  pose.pitch = Math.asin(clamp(pose.axis.y, -1, 1));
+  pose.velocity = pose.linearVelocity.y;
+  pose.pitchVelocity = pose.angularVelocity.dot(new THREE.Vector3(-Math.sin(pose.yaw), 0, Math.cos(pose.yaw)));
+  pose.boundRadius = Math.hypot(pose.length * .55, pose.radius * pose.collisionScale);
+  pose.collisionRadius = pose.radius * pose.collisionScale;
+  for (let i = 0; i < pose.localPoints.length; i++) {
+    const p = pose.localPoints[i];
+    const fracture = pose.fracture;
+    const notch = fracture ? 1 - fracture.severity * Math.exp(-(((p.y + .5 - fracture.t) / .12) ** 2))
+      * Math.max(0, Math.cos(Math.atan2(p.z, p.x) - fracture.angle)) ** 4 : 1;
+    pose.worldPoints[i].set(p.x * pose.radius * notch, p.y * pose.length, p.z * pose.radius * notch)
+      .applyQuaternion(pose.quaternion).add(pose.position);
   }
-  for (const lower of lowerLogs) {
-    if (!lower.live) continue;
-    const contact = crossing(pose.a, pose.b, lower.a, lower.b), combined = pose.radius + lower.radius;
-    if (contact.distance >= combined * .98) continue;
-    const height = THREE.MathUtils.lerp(lower.a.y, lower.b.y, contact.s) + Math.sqrt(combined * combined - contact.distance * contact.distance);
-    contacts.push({ t: contact.t, height, slot: lower.slot });
+}
+
+function makeShape(pose, profile) {
+  pose.localPoints = []; pose.profile = profile;
+  const rows = pose.fuelType === 'stump' ? 10 : profile ? 8 : 4;
+  const sides = pose.fuelType === 'plank' ? 4 : pose.fuelType === 'stump' ? 36 : 16;
+  pose.shapeRows = rows; pose.shapeSides = sides;
+  pose.collisionScale = 1;
+  for (let row = 0; row <= rows; row++) for (let side = 0; side < sides; side++) {
+    let p;
+    if (pose.fuelType === 'plank') {
+      const depth = 1 / Math.hypot(PLANK_ASPECT_RATIO, 1);
+      p = new THREE.Vector3((side < 2 ? -1 : 1) * depth * PLANK_ASPECT_RATIO,
+        row / rows - .5, (side % 2 ? -1 : 1) * depth);
+    } else if (profile) {
+      p = sampleFuelSurface(profile, side / sides * Math.PI * 2, row / rows);
+      p.x /= profile.radius; p.y /= profile.length; p.z /= profile.radius;
+    } else p = new THREE.Vector3(Math.cos(side / sides * Math.PI * 2), row / rows - .5, Math.sin(side / sides * Math.PI * 2));
+    pose.collisionScale = Math.max(pose.collisionScale, Math.hypot(p.x, p.z));
+    pose.localPoints.push(p);
+  }
+  pose.worldPoints = pose.localPoints.map(() => new THREE.Vector3());
+}
+
+function makePose(definition, log, time, groundHeight, profile) {
+  const type = getFuelType(log.fuelType);
+  const a = new THREE.Vector3(...definition[0]).applyAxisAngle(UP, log.angle || 0);
+  const b = new THREE.Vector3(...definition[1]).applyAxisAngle(UP, log.angle || 0);
+  const delta = b.clone().sub(a), center = a.clone().lerp(b, .5);
+  const pose = { id: log.id, fuelType: log.fuelType || 'log', slot: log.slot,
+    x: center.x + (log.offset || 0), y: center.y + groundHeight(center.x, center.z), z: center.z,
+    baseX: center.x + (log.offset || 0), baseZ: center.z,
+    baseLength: delta.length() * type.lengthScale, baseRadius: definition[2] * type.radiusScale,
+    length: delta.length() * type.lengthScale, radius: definition[2] * type.radiusScale,
+    quaternion: new THREE.Quaternion().setFromUnitVectors(UP, delta.normalize()),
+    position: center, axis: new THREE.Vector3(), sectionX: new THREE.Vector3(), sectionZ: new THREE.Vector3(),
+    linearVelocity: new THREE.Vector3(), angularVelocity: new THREE.Vector3(), inverseInertia: new THREE.Vector3(),
+    a, b, live: active(log), born: time, initial: log.addedAt === null || log.addedAt < 0, initialized: false,
+    mass: 1, inverseMass: 1, compression: 1, sleeping: false, quietTime: 0,
+    maxFall: 0, fallFrom: 0, inFlight: false, supports: [], supportIds: [], lastImpact: -10, releases: 0,
+    damage: 0, fracture: null, velocity: 0, pitchVelocity: 0 };
+  makeShape(pose, profile); syncPose(pose); return pose;
+}
+
+function updateMass(pose, mass) {
+  pose.mass = Math.max(.008, mass); pose.inverseMass = 1 / pose.mass;
+  const side = pose.mass * (3 * pose.radius ** 2 + pose.length ** 2) / 12;
+  pose.inverseInertia.set(1 / Math.max(.00003, side),
+    1 / Math.max(.00003, pose.mass * pose.radius ** 2 * .5), 1 / Math.max(.00003, side));
+  // Angular response is bounded for ash-size particles, without making intact
+  // light kindling artificially as massive as a trunk.
+  pose.inverseInertia.clampScalar(0, 3500);
+}
+
+function inverseInertia(pose, vector) {
+  return vector.clone().applyQuaternion(pose.quaternion.clone().invert()).multiply(pose.inverseInertia).applyQuaternion(pose.quaternion);
+}
+
+function wake(pose) { pose.sleeping = false; pose.quietTime = 0; }
+
+function closestSegments(a, b, c, d) {
+  const u = b.clone().sub(a), v = d.clone().sub(c), w = a.clone().sub(c);
+  const aa = u.dot(u), bb = u.dot(v), cc = v.dot(v), dd = u.dot(w), ee = v.dot(w);
+  const denominator = aa * cc - bb * bb;
+  let t = denominator > 1e-10 ? clamp((bb * ee - cc * dd) / denominator, 0, 1) : .5;
+  let s = cc > 1e-10 ? clamp((bb * t + ee) / cc, 0, 1) : 0;
+  t = aa > 1e-10 ? clamp((bb * s - dd) / aa, 0, 1) : 0;
+  s = cc > 1e-10 ? clamp((bb * t + ee) / cc, 0, 1) : 0;
+  return { t, s, a: a.clone().addScaledVector(u, t), b: c.clone().addScaledVector(v, s) };
+}
+
+function interval(pose, axis) {
+  let min = Infinity, max = -Infinity;
+  for (const point of pose.worldPoints) { const d = point.dot(axis); min = Math.min(min, d); max = Math.max(max, d); }
+  return { min, max };
+}
+
+// Finite convex cross sections: caps and side faces are tested separately, so
+// short stumps/planks do not acquire invisible capsule ends. Axes include the
+// closest rod separation, both end normals and oriented box edge cross products.
+function bodyContact(a, b) {
+  if (a.position.distanceToSquared(b.position) > (a.boundRadius + b.boundRadius + SKIN) ** 2) return null;
+  const closest = closestSegments(a.a, a.b, b.a, b.b), delta = a.position.clone().sub(b.position);
+  const axes = [closest.a.clone().sub(closest.b), a.axis, b.axis, a.axis.clone().cross(b.axis),
+    a.sectionX, a.sectionZ, b.sectionX, b.sectionZ];
+  const basisA = [a.axis, a.sectionX, a.sectionZ], basisB = [b.axis, b.sectionX, b.sectionZ];
+  if (a.fuelType === 'plank' || b.fuelType === 'plank') {
+    for (const x of basisA) for (const y of basisB) axes.push(x.clone().cross(y));
+  }
+  let depth = Infinity, normal = null;
+  for (const candidate of axes) {
+    if (candidate.lengthSq() < 1e-10) continue;
+    const n = candidate.clone().normalize();
+    if (delta.dot(n) < 0) n.negate();
+    const ia = interval(a, n), ib = interval(b, n), overlap = ib.max - ia.min;
+    if (overlap < -SKIN - 1e-8 || ia.max - ib.min < -SKIN - 1e-8) return null;
+    if (overlap < depth) { depth = overlap; normal = n; }
+  }
+  if (!normal) return null;
+  // Project the axis closest point onto the actual contacting support planes.
+  // This keeps the lever arm at the crossing, not at an arbitrary cap vertex.
+  const ia = interval(a, normal), ib = interval(b, normal);
+  const point = closest.a.clone().lerp(closest.b, .5);
+  point.addScaledVector(normal, (ia.min + ib.max) * .5 - point.dot(normal));
+  const points = [point];
+  // Parallel pieces have a contact line, not a balancing point at one end.
+  if (Math.abs(a.axis.dot(b.axis)) > .96 && Math.abs(normal.dot(a.axis)) < .15) {
+    const along = a.axis, axisA = interval(a, along), axisB = interval(b, along);
+    const lo = Math.max(axisA.min, axisB.min), hi = Math.min(axisA.max, axisB.max);
+    if (hi - lo > Math.min(a.radius, b.radius) * 1.4) {
+      points[0] = point.clone().addScaledVector(along, lo + (hi - lo) * .15 - point.dot(along));
+      points.push(point.clone().addScaledVector(along, hi - (hi - lo) * .15 - point.dot(along)));
+    }
+  }
+  return { a, b, normal, depth, points };
+}
+
+function groundContacts(pose, height) {
+  const candidates = [];
+  for (const point of pose.worldPoints) {
+    const penetration = height(point.x, point.z) + SKIN - point.y;
+    if (penetration >= -SKIN) candidates.push({ point, depth: penetration });
+  }
+  if (!candidates.length) return [];
+  candidates.sort((a, b) => b.depth - a.depth);
+  const chosen = [candidates[0]];
+  // A small persistent manifold supports an entire face, while a true endpoint
+  // contact remains off-center and therefore creates a gravitational torque.
+  for (let i = 1; i < 4; i++) {
+    let best = null, distance = .0004;
+    for (const candidate of candidates) {
+      if (candidate.depth < candidates[0].depth - .008) continue;
+      const separation = Math.min(...chosen.map(c => c.point.distanceToSquared(candidate.point)));
+      if (separation > distance) { best = candidate; distance = separation; }
+    }
+    if (!best) break;
+    chosen.push(best);
+  }
+  return chosen.map(({ point, depth }) => {
+    const e = .01, dx = (height(point.x + e, point.z) - height(point.x - e, point.z)) / (2 * e);
+    const dz = (height(point.x, point.z + e) - height(point.x, point.z - e)) / (2 * e);
+    return { a: pose, b: null, normal: new THREE.Vector3(-dx, 1, -dz).normalize(), depth, points: [point.clone()] };
+  });
+}
+
+function allContacts(bodies, height) {
+  const contacts = [];
+  for (let i = 0; i < bodies.length; i++) {
+    contacts.push(...groundContacts(bodies[i], height));
+    for (let j = 0; j < i; j++) {
+      if (bodies[i].fragment && bodies[j].fragment) continue;
+      const contact = bodyContact(bodies[i], bodies[j]);
+      if (contact) contacts.push(contact);
+    }
   }
   return contacts;
 }
 
-// Find the lowest center of mass whose whole axis clears the soil and crossed
-// logs. A tilted rod normally rests on an endpoint and one crossed log.
-function restingPose(pose, contacts) {
+function pointVelocity(pose, arm) { return pose ? pose.angularVelocity.clone().cross(arm).add(pose.linearVelocity) : new THREE.Vector3(); }
+function effectiveMass(pose, arm, n) {
+  if (!pose) return 0;
+  return pose.inverseMass + inverseInertia(pose, arm.clone().cross(n)).cross(arm).dot(n);
+}
+function impulse(pose, arm, impulseVector) {
+  if (!pose) return;
+  pose.linearVelocity.addScaledVector(impulseVector, pose.inverseMass);
+  pose.angularVelocity.add(inverseInertia(pose, arm.clone().cross(impulseVector)));
+}
+
+function prepareContacts(contacts, time, state) {
+  for (const contact of contacts) {
+    const { a, b, normal } = contact;
+    if (a.sleeping && b && !b.sleeping || b?.sleeping && !a.sleeping) { wake(a); if (b) wake(b); }
+    contact.constraints = contact.points.map(point => {
+      const ra = point.clone().sub(a.position), rb = b ? point.clone().sub(b.position) : new THREE.Vector3();
+      const speed = pointVelocity(a, ra).sub(pointVelocity(b, rb)).dot(normal);
+      // An impact belongs to the arriving/moving body; opposite support impulses
+      // should not create duplicate spark/audio events on a quiet bottom log.
+      const owner = b && b.inFlight && !a.inFlight ? b : a;
+      if (speed < -.5 && owner.inFlight && time - owner.lastImpact > .45 && owner.maxFall > .012) {
+        state.impacts.push({ slot: owner.slot, time, strength: clamp((-speed * .2 + owner.maxFall * .65) * Math.sqrt(owner.mass), .08, 1),
+          position: point.clone(), heat: owner.heat, kind: 'impact' });
+        owner.lastImpact = time;
+      }
+      return { point, ra, rb, normalImpulse: 0, tangentImpulse: new THREE.Vector3(), bounce: speed < -1 ? -.025 * speed : 0 };
+    });
+  }
+}
+
+function solveVelocity(contacts) {
+  for (let pass = 0; pass < 12; pass++) for (const contact of contacts) {
+    const { a, b, normal } = contact;
+    if (a.sleeping && (!b || b.sleeping)) continue;
+    for (const c of contact.constraints) {
+      let relative = pointVelocity(a, c.ra).sub(pointVelocity(b, c.rb));
+      const mass = effectiveMass(a, c.ra, normal) + effectiveMass(b, c.rb, normal);
+      const before = c.normalImpulse;
+      c.normalImpulse = Math.max(0, before + (c.bounce - relative.dot(normal)) / mass);
+      const normalDelta = c.normalImpulse - before;
+      const force = normal.clone().multiplyScalar(normalDelta);
+      impulse(a, c.ra, force); if (b) impulse(b, c.rb, force.negate());
+      relative = pointVelocity(a, c.ra).sub(pointVelocity(b, c.rb));
+      const tangent = relative.addScaledVector(normal, -relative.dot(normal));
+      const speed = tangent.length();
+      if (speed < 1e-8) continue;
+      tangent.divideScalar(speed);
+      const frictionMass = effectiveMass(a, c.ra, tangent) + effectiveMass(b, c.rb, tangent);
+      const old = c.tangentImpulse.clone();
+      c.tangentImpulse.addScaledVector(tangent, -speed / frictionMass);
+      const friction = b ? .58 : .72, limit = friction * c.normalImpulse;
+      if (c.tangentImpulse.length() > limit) c.tangentImpulse.setLength(limit);
+      const frictionDelta = c.tangentImpulse.clone().sub(old);
+      impulse(a, c.ra, frictionDelta); if (b) impulse(b, c.rb, frictionDelta.negate());
+    }
+  }
+}
+
+function correctPositions(bodies, groundHeight) {
+  // Split positional correction changes neither linear nor angular velocity.
+  // Removing overlap therefore cannot kick energy into a resting stack.
+  for (let pass = 0; pass < 6; pass++) {
+    const contacts = allContacts(bodies, groundHeight);
+    for (const { a, b, normal, depth } of contacts) {
+      if (depth <= CONTACT_SLOP) continue;
+      if (a.sleeping && (!b || b.sleeping)) continue;
+      const total = a.inverseMass + (b?.inverseMass || 0), correction = Math.min(.06, (depth - CONTACT_SLOP) * .8);
+      const va = normal.clone().multiplyScalar(correction * a.inverseMass / total);
+      a.x += va.x; a.y += va.y; a.z += va.z; syncPose(a);
+      if (b) { const vb = normal.clone().multiplyScalar(correction * b.inverseMass / total); b.x -= vb.x; b.y -= vb.y; b.z -= vb.z; syncPose(b); }
+    }
+  }
+}
+
+function setSupports(bodies, contacts, dt) {
+  for (const pose of bodies) { pose.supports = []; pose.supportIds = []; pose.contactCount = 0; }
+  for (const { a, b, normal } of contacts) {
+    if (normal.y > .25) { a.contactCount++; if (b && !b.fragment) { a.supports.push(b.slot); a.supportIds.push(b.id); } }
+    if (b && normal.y < -.25) { b.contactCount++; if (!a.fragment) { b.supports.push(a.slot); b.supportIds.push(a.id); } }
+  }
+  for (const pose of bodies) {
+    pose.supports = [...new Set(pose.supports)];
+    if (pose.contactCount) {
+      pose.inFlight = false; pose.maxFall = 0;
+      // Wood dissipates rolling energy at contacts; air damping never steers it
+      // toward an invented destination. Slopes still accelerate a resting round log.
+      pose.angularVelocity.multiplyScalar(Math.exp(-dt * 1.1));
+      if (pose.linearVelocity.lengthSq() < .0004 && pose.angularVelocity.lengthSq() < .0025) pose.quietTime += dt;
+      else pose.quietTime = 0;
+      if (pose.quietTime > .55) { pose.sleeping = true; pose.linearVelocity.set(0, 0, 0); pose.angularVelocity.set(0, 0, 0); }
+    } else { if (!pose.inFlight) pose.fallFrom = pose.y; pose.inFlight = true; pose.quietTime = 0; wake(pose); }
+    syncPose(pose);
+  }
+}
+
+function balancedAtRest(pose, contacts) {
+  const points = [];
+  for (const contact of contacts) {
+    const normalY = contact.a === pose ? contact.normal.y : contact.b === pose ? -contact.normal.y : 0;
+    if (normalY > .99995) points.push(...contact.points);
+  }
+  const center = new THREE.Vector3(pose.x, 0, pose.z);
+  const flat = points.map(p => new THREE.Vector3(p.x, 0, p.z));
+  if (flat.some(p => p.distanceToSquared(center) < .0001)) return true;
+  for (let i = 0; i < flat.length; i++) for (let j = 0; j < i; j++) {
+    const edge = flat[i].clone().sub(flat[j]);
+    const t = clamp(center.clone().sub(flat[j]).dot(edge) / Math.max(1e-10, edge.lengthSq()), 0, 1);
+    if (flat[j].clone().addScaledVector(edge, t).distanceToSquared(center) < .0001) return true;
+    for (let k = 0; k < j; k++) {
+      const signs = [[flat[i], flat[j]], [flat[j], flat[k]], [flat[k], flat[i]]].map(([a, b]) =>
+        (b.x - a.x) * (center.z - a.z) - (b.z - a.z) * (center.x - a.x));
+      if (signs.every(s => s > 1e-6) || signs.every(s => s < -1e-6)) return true;
+    }
+  }
+  return false;
+}
+
+function sectionHeight(pose, t, top) {
+  const row = clamp(t, 0, 1) * pose.shapeRows, a = Math.floor(row), b = Math.min(pose.shapeRows, a + 1);
+  const sample = row => {
+    let value = -Infinity;
+    const axisY = pose.y + (row / pose.shapeRows - .5) * pose.axis.y * pose.length;
+    for (let i = 0; i < pose.shapeSides; i++) {
+      const y = pose.worldPoints[row * pose.shapeSides + i].y;
+      value = Math.max(value, top ? y - axisY : axisY - y);
+    }
+    return value;
+  };
+  return THREE.MathUtils.lerp(sample(a), sample(b), row - a);
+}
+
+function placementContacts(pose, existing, height) {
+  const contacts = [];
+  for (let row = 0; row <= pose.shapeRows; row++) {
+    const t = row / pose.shapeRows, axisY = pose.y + (t - .5) * pose.axis.y * pose.length;
+    let minimum = -Infinity;
+    for (let i = 0; i < pose.shapeSides; i++) {
+      const p = pose.worldPoints[row * pose.shapeSides + i];
+      minimum = Math.max(minimum, height(p.x, p.z) + SKIN + axisY - p.y);
+    }
+    contacts.push({ t, height: minimum });
+  }
+  const pa = pose.a.clone(); pa.y = 0; const pb = pose.b.clone(); pb.y = 0;
+  for (const other of existing) {
+    const oa = other.a.clone(); oa.y = 0; const ob = other.b.clone(); ob.y = 0;
+    const cross = closestSegments(pa, pb, oa, ob);
+    const distance = cross.a.distanceTo(cross.b);
+    const normal = distance > 1e-8 ? cross.a.clone().sub(cross.b).divideScalar(distance) : new THREE.Vector3(-Math.sin(pose.yaw), 0, Math.cos(pose.yaw));
+    const widthOf = body => body.fuelType === 'plank' ? body.radius / Math.hypot(PLANK_ASPECT_RATIO, 1)
+      * (Math.abs(body.sectionX.dot(normal)) * PLANK_ASPECT_RATIO + Math.abs(body.sectionZ.dot(normal))) : body.radius * body.collisionScale;
+    const width = widthOf(pose) + widthOf(other);
+    if (distance >= width) continue;
+    const vertical = sectionHeight(pose, cross.t, false) + sectionHeight(other, cross.s, true);
+    contacts.push({ t: cross.t, height: THREE.MathUtils.lerp(other.a.y, other.b.y, cross.s)
+      + vertical * Math.sqrt(1 - distance ** 2 / width ** 2) });
+  }
+  return contacts;
+}
+
+function lowestPlacement(pose, contacts) {
   let best = { y: Infinity, difference: 0 };
-  const limit = pose.length * .62;
+  const limit = pose.length * .72;
   const evaluate = difference => {
     if (Math.abs(difference) > limit) return;
     let y = -Infinity;
     for (const contact of contacts) y = Math.max(y, contact.height - (contact.t - .5) * difference);
-    // Prefer a small tilt when several support arrangements have equal height.
     if (y + Math.abs(difference) * .001 < best.y + Math.abs(best.difference) * .001) best = { y, difference };
   };
   evaluate(0); evaluate(-limit); evaluate(limit);
-  for (let i = 0; i < contacts.length; i++) for (let j = i + 1; j < contacts.length; j++) {
-    const distance = contacts[i].t - contacts[j].t;
-    if (Math.abs(distance) > .025) evaluate((contacts[i].height - contacts[j].height) / distance);
+  for (let i = 0; i < contacts.length; i++) for (let j = 0; j < i; j++) {
+    const span = contacts[i].t - contacts[j].t;
+    if (Math.abs(span) > .02) evaluate((contacts[i].height - contacts[j].height) / span);
   }
-  return { y: best.y, pitch: Math.asin(clamp(best.difference / pose.length, -.62, .62)) };
+  return { y: best.y, pitch: Math.asin(clamp(best.difference / pose.length, -.72, .72)) };
 }
 
-function makePose(definition, log, time, groundHeight) {
-  const a = new THREE.Vector3(...definition[0]).applyAxisAngle(new THREE.Vector3(0, 1, 0), log.angle);
-  const b = new THREE.Vector3(...definition[1]).applyAxisAngle(new THREE.Vector3(0, 1, 0), log.angle);
-  const delta = b.clone().sub(a), center = a.clone().lerp(b, .5);
-  return { id: log.id, slot: log.slot, x: center.x + log.offset, y: center.y + groundHeight(center.x, center.z), z: center.z,
-    baseX: center.x + log.offset, baseZ: center.z, baseLength: delta.length(), baseRadius: definition[2],
-    length: delta.length() * log.scale, radius: definition[2] * Math.sqrt(massOf(log)) * log.scale,
-    yaw: Math.atan2(delta.z, delta.x), pitch: Math.asin(delta.y / delta.length()), pitchVelocity: 0, velocity: 0,
-    targetX: center.x + log.offset, targetZ: center.z, targetYaw: Math.atan2(delta.z, delta.x), compression: 1,
-    a, b, live: active(log), born: time, initial: log.addedAt === null || log.addedAt < 0, initialized: false,
-    maxFall: 0, fallFrom: 0, inFlight: false, supports: [], lastImpact: -10, releases: 0 };
+// Arrival order is only a placement convention. Once released, every pair is
+// solved symmetrically; an older log can fall onto and be caught by a newer one.
+// The prepared pile uses local crossing heights, not each lower log's tallest
+// endpoint, so an angled branch does not levitate the entire layer above it.
+function initializePose(pose, existing, height) {
+  const yaw = pose.yaw;
+  for (let iteration = 0; iteration < 4; iteration++) {
+    syncPose(pose);
+    const rest = lowestPlacement(pose, placementContacts(pose, existing, height));
+    pose.y = rest.y;
+    const axis = new THREE.Vector3(Math.cos(yaw) * Math.cos(rest.pitch), Math.sin(rest.pitch), Math.sin(yaw) * Math.cos(rest.pitch));
+    pose.quaternion.setFromUnitVectors(UP, axis);
+  }
+  if (!pose.initial) pose.y += .92;
+  pose.initialized = true; pose.fallFrom = pose.y; pose.inFlight = !pose.initial;
+  syncPose(pose);
 }
 
-function releaseWeakSupport(state, cycle, time) {
-  if (time < state.nextCollapse) return;
-  state.nextCollapse = time + 9 + state.random() * 12;
-  const candidates = state.logs.filter(pose => {
-    const log = cycle.logs[pose.slot];
-    return pose.live && log.temperature > .42 && log.wood < .74 && pose.releases < 3 && !pose.inFlight;
-  });
-  if (!candidates.length) return;
-  candidates.sort((a, b) => cycle.logs[a.slot].wood + a.releases * .22 - cycle.logs[b.slot].wood - b.releases * .22);
-  const pose = candidates[0], turn = (state.random() - .5) * .36;
-  pose.releases++;
-  pose.compression *= .81;
-  // A charred shell gives way, rolling toward the center and disturbing logs
-  // it supported. Gravity and actual contacts determine when the impact occurs.
-  pose.targetX = pose.x * .75 + Math.sin(pose.yaw) * turn;
-  pose.targetZ = pose.z * .75 - Math.cos(pose.yaw) * turn;
-  pose.targetYaw += turn;
-  pose.pitchVelocity += (state.random() - .5) * .8;
+function releaseWeakSupport(state, cycle, dt, time) {
+  for (const pose of state.logs) {
+    if (!pose.live || pose.fragment || pose.releases >= 3 || pose.inFlight) continue;
+    const fuel = cycle.logs[pose.slot];
+    if (fuel.temperature < .42 || fuel.wood > .74 || fuel.char < .018) continue;
+    let weakest = 0, weakness = 0;
+    const patches = fuel.surface?.patches;
+    for (let row = 0; row < 5; row++) {
+      const local = patches?.slice(row * 8, (row + 1) * 8);
+      const wood = local?.length ? local.reduce((sum, p) => sum + p.wood, 0) / local.length : fuel.wood;
+      const heat = local?.length ? local.reduce((sum, p) => sum + p.temperature, 0) / local.length : fuel.temperature;
+      const damage = Math.max(0, .78 - wood) * heat;
+      if (damage > weakness) { weakness = damage; weakest = row; }
+    }
+    const load = state.logs.filter(p => p.live && p.supports.includes(pose.slot)).reduce((sum, p) => sum + p.mass, 0);
+    pose.damage += dt * weakness * (.055 + Math.min(2, load / pose.mass) * .06);
+    if (pose.damage < .19 + pose.releases * .045 || time < state.nextCollapse || state.fragments.length >= MAX_FRAGMENTS) continue;
+    const t = pose.fracture?.t ?? (patches ? (weakest + .5) / 5 : .35 + state.random() * .3);
+    const removed = removeCharFromSurface(fuel, Math.min(.027, fuel.char * .13), t);
+    if (!(removed > 0)) continue;
+    pose.damage = 0; pose.releases++; pose.compression *= .91; wake(pose);
+    const angle = pose.fracture?.angle ?? state.random() * Math.PI * 2;
+    const severity = clamp(pose.fracture ? pose.fracture.severity + .12 : weakness * 1.2, .15, .6);
+    pose.fracture = { t, angle, severity };
+    state.nextCollapse = time + 2.2 + state.random() * 2;
+    const position = pose.a.clone().lerp(pose.b, t).addScaledVector(pose.sectionX, Math.cos(angle) * pose.radius)
+      .addScaledVector(pose.sectionZ, Math.sin(angle) * pose.radius);
+    const chunkRadius = Math.max(.025, pose.radius * .34), chunkLength = Math.min(pose.length * .12, chunkRadius * 2.3);
+    const fragment = makePose([[0, 0, 0], [0, chunkLength, 0], chunkRadius],
+      { id: `char-${++state.nextFragment}`, slot: pose.slot, wood: 0, char: removed, angle: 0, scale: 1, addedAt: time, phase: 'coaling', fuelType: 'log' }, time, () => 0);
+    Object.assign(fragment, { fragment: true, x: position.x, y: position.y, z: position.z, radius: chunkRadius,
+      length: chunkLength, born: time, heat: fuel.temperature, initial: false, initialized: true, inFlight: true, sourceId: pose.id,
+      initialChar: removed * getFuelType(fuel.fuelType).mass, remainingChar: removed * getFuelType(fuel.fuelType).mass,
+      thermalAge: 0, fragmentRadius: chunkRadius, fragmentLength: chunkLength });
+    fragment.quaternion.copy(pose.quaternion); fragment.linearVelocity.copy(pose.linearVelocity);
+    // The fragment inherits point velocity. A tiny separating impulse represents
+    // shell stress; gravity and contacts choose its eventual destination.
+    fragment.linearVelocity.add(pose.angularVelocity.clone().cross(position.clone().sub(pose.position)))
+      .addScaledVector(position.clone().sub(pose.position).normalize(), .05);
+    updateMass(fragment, removed * getFuelType(fuel.fuelType).mass * 1.4); syncPose(fragment);
+    state.fragments.push(fragment);
+    state.impacts.push({ slot: pose.slot, time, strength: .16 + severity * .18, position, heat: fuel.temperature, kind: 'crumble' });
+  }
+}
+
+function ageFragments(state, cycle, elapsed) {
+  const burnTime = Number.isFinite(cycle.time) ? cycle.time : null;
+  const dt = burnTime === null ? elapsed : state.lastBurnTime === null ? 0 : Math.max(0, burnTime - state.lastBurnTime);
+  state.lastBurnTime = burnTime;
+  const retained = [];
+  const deposit = (amount, coal = false) => {
+    if (!(amount > 0)) return;
+    state[coal ? 'fragmentCoal' : 'fragmentAsh'] += amount;
+    const key = coal ? 'coalMass' : 'ashMass';
+    if (Number.isFinite(cycle[key])) cycle[key] += amount;
+  };
+  for (const fragment of state.fragments) {
+    fragment.thermalAge += dt;
+    // Char particles use simulation seconds for heat/fuel, while their falling
+    // and collisions continue in real seconds even at 1200x playback.
+    const coupling = Math.exp(-(fragment.x ** 2 + fragment.z ** 2) / 1.8) * Math.exp(-Math.max(0, fragment.y) * 1.3);
+    const target = Number.isFinite(cycle.coalHeat) ? cycle.coalHeat * coupling * .72 : 0;
+    const oldHeat = fragment.heat;
+    fragment.heat += (target - fragment.heat) * (1 - Math.exp(-dt / 150));
+    const heat = (oldHeat + fragment.heat) * .5;
+    const burned = heat > .07 ? Math.min(fragment.remainingChar, dt * .00020 * heat
+      * Math.max(.16, fragment.remainingChar / fragment.initialChar)) : 0;
+    fragment.remainingChar -= burned; deposit(burned);
+    if (fragment.remainingChar < fragment.initialChar * .02 || fragment.thermalAge > 1800) {
+      deposit(fragment.remainingChar, fragment.heat < .07); fragment.remainingChar = 0; fragment.live = false; continue;
+    }
+    const scale = Math.cbrt(fragment.remainingChar / fragment.initialChar);
+    const radius = fragment.fragmentRadius * scale, length = fragment.fragmentLength * scale;
+    if (Math.abs(radius - fragment.radius) + Math.abs(length - fragment.length) > .00002) wake(fragment);
+    fragment.radius = radius; fragment.length = length;
+    updateMass(fragment, fragment.remainingChar * 1.4); syncPose(fragment); retained.push(fragment);
+  }
+  state.fragments = retained;
+  cycle.fragmentChar = retained.reduce((sum, fragment) => sum + fragment.remainingChar, 0);
+  cycle.fragmentHeat = cycle.fragmentChar > 0 ? retained.reduce((sum, fragment) => sum + fragment.heat * fragment.remainingChar, 0) / cycle.fragmentChar : 0;
 }
 
 export function updateLogSettling(state, cycle, time, groundHeight = () => 0) {
   state.impacts = [];
-  const firstUpdate = state.lastTime === null;
-  const elapsed = firstUpdate ? 0 : clamp(time - state.lastTime, 0, .12);
+  const hadFragments = state.fragments.length > 0;
+  const elapsed = state.lastTime === null ? 0 : clamp(time - state.lastTime, 0, .12);
   state.lastTime = time;
+  const arrivals = [];
   for (let i = 0; i < cycle.logs.length; i++) {
     const log = cycle.logs[i];
-    if (!state.logs[i] || state.logs[i].id !== log.id) state.logs[i] = makePose(state.definitions[i], log, time, groundHeight);
-    const pose = state.logs[i];
-    if (!pose.live && active(log)) { pose.initialized = false; pose.initial = false; pose.born = time; }
-    pose.live = active(log);
-    const mass = massOf(log);
-    pose.length = pose.baseLength * log.scale * (.84 + .16 * Math.sqrt(Math.min(1, mass)));
-    pose.radius = pose.baseRadius * Math.max(.035, Math.sqrt(mass)) * log.scale * pose.compression;
+    if (!state.logs[i] || state.logs[i].id !== log.id || state.logs[i].fuelType !== (log.fuelType || 'log'))
+      state.logs[i] = makePose(state.definitions[i], log, time, groundHeight, state.profiles[i]);
+    const pose = state.logs[i], wasLive = pose.live;
+    if (!wasLive && active(log)) { pose.initialized = false; pose.initial = false; pose.born = time; }
+    pose.live = active(log); pose.heat = log.temperature;
+    const mass = massOf(log), length = pose.baseLength * log.scale * (.84 + .16 * Math.sqrt(Math.min(1, mass)));
+    const radius = pose.baseRadius * Math.max(.035, Math.sqrt(mass)) * log.scale * pose.compression;
+    if (Math.abs(length - pose.length) + Math.abs(radius - pose.radius) > .00002) wake(pose);
+    pose.length = length; pose.radius = radius;
+    updateMass(pose, mass * getFuelType(log.fuelType).mass * log.scale ** 3); syncPose(pose);
+    if (pose.live && !pose.initialized) arrivals.push(pose);
   }
-  releaseWeakSupport(state, cycle, time);
-  // Stable contact order follows arrival: replacement fuel is laid on the
-  // current pile rather than being teleported underneath older logs.
-  const ordered = state.logs.filter(pose => pose.live).sort((a, b) => {
-    const la = cycle.logs[a.slot], lb = cycle.logs[b.slot];
-    return (la.addedAt >= 0 ? la.addedAt + 1 : 0) - (lb.addedAt >= 0 ? lb.addedAt + 1 : 0) || a.slot - b.slot;
-  });
-  const steps = Math.max(1, Math.ceil(elapsed / (1 / 90))), dt = elapsed / steps;
+  const existing = state.logs.filter(p => p.live && p.initialized);
+  const arrivalTime = pose => cycle.logs[pose.slot].addedAt >= 0 ? cycle.logs[pose.slot].addedAt + 1 : 0;
+  arrivals.sort((a, b) => arrivalTime(a) - arrivalTime(b) || a.slot - b.slot);
+  for (const pose of arrivals) { initializePose(pose, existing, groundHeight); existing.push(pose); }
+  const liveIds = new Set(state.logs.filter(p => p.live).map(p => p.id));
+  for (const pose of state.logs) if (pose.live && pose.supportIds.some(id => !liveIds.has(id))) wake(pose);
+  ageFragments(state, cycle, elapsed);
+  state.accumulator += elapsed;
+  let steps = Math.floor((state.accumulator + 1e-9) / STEP);
+  state.accumulator -= steps * STEP;
+  if (elapsed === 0 && arrivals.length) {
+    const bodies = state.logs.filter(p => p.live);
+    const contacts = allContacts(bodies, groundHeight); setSupports(bodies, contacts, 0);
+    // A deliberately prepared, balanced stack need not jitter for half a second
+    // on page load. An off-center support or a slope still starts moving.
+    for (const pose of arrivals) if (pose.initial && pose.contactCount && balancedAtRest(pose, contacts)) pose.sleeping = true;
+  }
   for (let step = 0; step < steps; step++) {
-    const lower = [];
-    for (const pose of ordered) {
-      endpoints(pose);
-      let contacts = constraints(pose, lower, groundHeight), rest = restingPose(pose, contacts);
-      if (!pose.initialized) {
-        pose.pitch = rest.pitch; endpoints(pose);
-        contacts = constraints(pose, lower, groundHeight); rest = restingPose(pose, contacts);
-        pose.y = rest.y + (pose.initial ? 0 : .92);
-        pose.pitch = rest.pitch; pose.initialized = true; pose.fallFrom = pose.y;
+    state.physicsTime += STEP;
+    releaseWeakSupport(state, cycle, STEP, time);
+    const bodies = [...state.logs.filter(p => p.live), ...state.fragments];
+    const smallest = Math.max(.012, Math.min(...bodies.map(p => p.radius)));
+    const sweptSpeed = Math.max(0, ...bodies.map(p => p.linearVelocity.length() + p.angularVelocity.length() * p.boundRadius));
+    // Swept-distance substeps protect thin kindling and char from tunneling
+    // during a fast fall; one body cannot cross another between narrow phases.
+    const substeps = clamp(Math.ceil((sweptSpeed + GRAVITY * STEP) * STEP / (smallest * .65)), 1, 16);
+    const dt = STEP / substeps;
+    for (let substep = 0; substep < substeps; substep++) {
+      for (const pose of bodies) {
+        if (pose.sleeping && (pose.linearVelocity.lengthSq() > 1e-8 || pose.angularVelocity.lengthSq() > 1e-8)) wake(pose);
+        if (pose.sleeping) continue;
+        pose.linearVelocity.y -= GRAVITY * dt;
+        pose.linearVelocity.multiplyScalar(Math.exp(-dt * .035));
+        pose.x += pose.linearVelocity.x * dt; pose.y += pose.linearVelocity.y * dt; pose.z += pose.linearVelocity.z * dt;
+        const angularSpeed = pose.angularVelocity.length();
+        if (angularSpeed > 1e-8) pose.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(pose.angularVelocity.clone().divideScalar(angularSpeed), angularSpeed * dt)).normalize();
+        pose.maxFall = Math.max(pose.maxFall, pose.fallFrom - pose.y); syncPose(pose);
       }
-      if (dt > 0) {
-        const slide = 1 - Math.exp(-dt * 3.7);
-        pose.x += (pose.targetX - pose.x) * slide; pose.z += (pose.targetZ - pose.z) * slide;
-        pose.yaw += (pose.targetYaw - pose.yaw) * slide;
-        pose.pitchVelocity += (rest.pitch - pose.pitch) * dt * 38;
-        pose.pitchVelocity *= Math.exp(-dt * 8.5);
-        pose.pitch = clamp(pose.pitch + pose.pitchVelocity * dt, -.68, .68);
-        endpoints(pose); contacts = constraints(pose, lower, groundHeight);
-        let floor = -Infinity;
-        const difference = Math.sin(pose.pitch) * pose.length;
-        for (const contact of contacts) floor = Math.max(floor, contact.height - (contact.t - .5) * difference);
-        const clearance = pose.y - floor;
-        if (clearance > .003) {
-          if (!pose.inFlight) pose.fallFrom = pose.y;
-          pose.inFlight = true;
-          pose.velocity -= 5.8 * dt;
-          pose.y += pose.velocity * dt;
-          pose.maxFall = Math.max(pose.maxFall, pose.fallFrom - pose.y);
-        }
-        if (pose.y <= floor + .003) {
-          if (pose.inFlight && pose.velocity < -.38 && pose.maxFall > .016 && time - pose.lastImpact > .45) {
-            const strength = clamp((-pose.velocity * .22 + pose.maxFall * .75) * Math.sqrt(Math.max(.05, massOf(cycle.logs[pose.slot]))), .08, 1);
-            const contactDistance = contact => Math.abs(contact.height - (floor + (contact.t - .5) * difference)) + Math.abs(contact.t - .5) * .002;
-            const lowest = contacts.reduce((best, contact) => contactDistance(contact) < contactDistance(best) ? contact : best, contacts[0]);
-            const position = pose.a.clone().lerp(pose.b, lowest.t); position.y = floor + (lowest.t - .5) * difference - pose.radius * .65;
-            state.impacts.push({ slot: pose.slot, time, strength, position, heat: cycle.logs[pose.slot].temperature });
-            pose.lastImpact = time;
-          }
-          pose.y = floor; pose.velocity = 0; pose.inFlight = false; pose.maxFall = 0;
-        }
-      }
-      endpoints(pose);
-      pose.supports = contacts.filter(c => c.slot >= 0 && Math.abs(c.height - THREE.MathUtils.lerp(pose.a.y, pose.b.y, c.t)) < .06).map(c => c.slot);
-      lower.push(pose);
+      const contacts = allContacts(bodies, groundHeight);
+      prepareContacts(contacts, time, state); solveVelocity(contacts); correctPositions(bodies, groundHeight);
+      setSupports(bodies, allContacts(bodies, groundHeight), dt);
     }
   }
+  // New fractures happen during the physics step, after thermal aging.
+  cycle.fragmentChar = state.fragments.reduce((sum, fragment) => sum + fragment.remainingChar, 0);
+  cycle.fragmentHeat = cycle.fragmentChar > 0 ? state.fragments.reduce((sum, fragment) => sum + fragment.heat * fragment.remainingChar, 0) / cycle.fragmentChar : 0;
+  if (hadFragments || state.fragments.length) cycle.updateSummary?.();
   return state;
 }

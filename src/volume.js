@@ -70,12 +70,21 @@ export function createVolume(kind, config, depthTexture) {
          vec3 p=ro+rd*(start+(float(i)+jitter)*stepSize);
          ${smoke?`
          float h=(p.y-.8)/5.8;
+         ${animatedSmoke ? `
+         // Slowly rising, correlated bends spread into a round plume. A single
+         // pair of fixed sine waves made the column sweep from side to side.
+         float advectedHeight=h*2.7-uTime*.16;
+         vec2 draft=vec2(noise3(vec3(advectedHeight,uSeed,3.1)),noise3(vec3(advectedHeight,uSeed,-7.4)))-.5;
+         vec2 center=vec2(.12+.48*h,.04*h)+draft*(.22+h*.80);
+         float radius=.34+h*.92;
+         ` : `
          vec2 center=vec2(.12+.52*h+sin(h*8.-uTime*.35)*.3,cos(h*6.-uTime*.28)*.22);
          float radius=.38+h*.84;
+         `}
          float envelope=exp(-dot(p.xz-center,p.xz-center)/(radius*radius)*2.2);
          float heightFade=smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y));
          ${animatedSmoke?'if(envelope*heightFade*uSmokeAmount<.001)continue;':''}
-         float cloud=fbm(p*vec3(2.2,1.5,2.2)+vec3(uSeed+uTime*.035,-uTime*${animatedSmoke?'.90':'.58'},0));
+         float cloud=fbm(p*vec3(2.2,1.5,2.2)+vec3(uSeed+uTime*.035,-uTime*${animatedSmoke?'1.10':'.58'},0));
          float density=max(0.,cloud-.29)*envelope*heightFade*(uMode==2?.55:uMode==3?.5:1.)*uSmokeAmount;
          float alpha=1.-exp(-density*stepSize*1.28);
          vec3 color=mix(vec3(.36,.23,.14),uSmokeColor,smoothstep(1.,3.8,p.y));
