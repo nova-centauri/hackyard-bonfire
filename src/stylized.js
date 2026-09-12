@@ -102,8 +102,13 @@ export function addStylizedFire(layers,config,logDefs) {
   const path=new THREE.CatmullRomCurve3(points),geo=ribbonGeometry(path,.045+rand()*.045,rand()*3,28);
   const mat=new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,
    uniforms:{uInk:{value:mode===2?1:0},uTime:{value:0},uLife:{value:1}},
-   vertexShader:'varying vec2 vUv;uniform float uTime;void main(){vUv=uv;vec3 p=position;float phase=position.y*7.;p.x+=(sin(phase-uTime*2.2)-sin(phase))*uv.y*uv.y*.03;p.z+=(cos(phase-uTime*1.7)-cos(phase))*uv.y*uv.y*.02;gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);}',
-   fragmentShader:`varying vec2 vUv;uniform float uInk,uTime,uLife;void main(){float edge=pow(max(0.,1.-abs(vUv.x*2.-1.)),.65);float alpha=edge*.73*(1.-smoothstep(.7,1.,vUv.y));alpha*=1.+(sin(vUv.y*14.-uTime*4.)-sin(vUv.y*14.))*.12;vec3 c=mix(vec3(.1,.22,1.1),vec3(2.,.65,.045),smoothstep(.02,.28,vUv.y));c=mix(c,vec3(2.2,1.3,.3),edge*.6);c=mix(c,vec3(1.,.4,.07),uInk);gl_FragColor=vec4(c,alpha*uLife);}`});
+   vertexShader:`varying vec2 vUv;uniform float uTime;
+    void main(){vUv=uv;vec3 p=position;float phase=uv.y*12.+position.x*3.,tip=uv.y*uv.y;
+      p.x+=(sin(phase-uTime*4.8)-sin(phase))*tip*.028;
+      p.z+=(cos(phase-uTime*3.7)-cos(phase))*tip*.018;
+      p.y+=(sin(phase-uTime*5.6)-sin(phase))*tip*.065;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);}`,
+   fragmentShader:`varying vec2 vUv;uniform float uInk,uTime,uLife;void main(){float edge=pow(max(0.,1.-abs(vUv.x*2.-1.)),.65);float alpha=edge*.73*(1.-smoothstep(.7,1.,vUv.y));alpha*=1.+(sin(vUv.y*14.-uTime*7.8)-sin(vUv.y*14.))*.18;vec3 c=mix(vec3(.1,.22,1.1),vec3(2.,.65,.045),smoothstep(.02,.28,vUv.y));c=mix(c,vec3(2.2,1.3,.3),edge*.6);c=mix(c,vec3(1.,.4,.07),uInk);gl_FragColor=vec4(c,alpha*uLife);}`});
   const m=new THREE.Mesh(geo,mat);m.renderOrder=3;m.userData.logSlot=i%logDefs.length;layers.flames.add(m);
  }
  // Two forked twigs are entirely sheathed in flame, including their tips.

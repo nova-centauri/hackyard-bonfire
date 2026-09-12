@@ -99,6 +99,9 @@ try{
   stage.dataset.animation=current?.animated?(viewer.paused?'paused':'playing'):'still';
   stage.dataset.sceneTime=viewer.current.animationTime.toFixed(3);
   stage.dataset.frameCount=viewer.frameCount;
+  stage.dataset.renderSize=`${viewer.renderSize.x}x${viewer.renderSize.y}`;
+  stage.dataset.drawCalls=viewer.renderer.info.render.calls;
+  stage.dataset.depthPasses=viewer.depthPassCount;
   stage.dataset.shaderErrors=viewer.shaderErrors.length;
   stage.dataset.impactCount=viewer.current.burnVisuals?.impactSerial||0;
   stage.dataset.impactEmbers=viewer.current.burnVisuals?.embers.length||0;

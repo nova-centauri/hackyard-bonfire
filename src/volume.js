@@ -13,6 +13,8 @@ vec2 boxHit(vec3 ro,vec3 rd,vec3 lo,vec3 hi) { vec3 a=(lo-ro)/rd,b=(hi-ro)/rd;ve
 
 export function createVolume(kind, config, depthTexture) {
  const smoke=kind==='smoke';
+ const animatedSmoke=smoke&&config.animated;
+ const steps=smoke?(animatedSmoke?40:52):88;
  const bounds=smoke?[new THREE.Vector3(-2.7,.7,-2.5),new THREE.Vector3(3.7,6.8,2.5)]:[new THREE.Vector3(-1.8,.12,-1.8),new THREE.Vector3(1.8,4.3*config.flameScale,1.8)];
  const size=bounds[1].clone().sub(bounds[0]);
  const geometry=new THREE.BoxGeometry(size.x,size.y,size.z);geometry.translate(...bounds[0].clone().add(bounds[1]).multiplyScalar(.5).toArray());
@@ -51,6 +53,7 @@ export function createVolume(kind, config, depthTexture) {
        return max(0.,envelope-(n*.86+.035))*(.8+fine*.5);
      }
      void main() {
+       ${animatedSmoke?'if(uSmokeAmount<.001)discard;':''}
        vec3 ro=cameraPosition,rd=normalize(vPosition-ro);
        vec2 hit=boxHit(ro,rd,uLo,uHi);
        float start=max(0.,hit.x),end=hit.y;
@@ -61,17 +64,19 @@ export function createVolume(kind, config, depthTexture) {
        end=min(end,dot(opaque-ro,rd));
        if(end<=start) discard;
        vec4 sum=vec4(0.);
-       float stepSize=(end-start)/${smoke?'52.':'88.'};
+       float stepSize=(end-start)/${steps}.;
        float jitter=hash(vec3(gl_FragCoord.xy,uSeed));
-       for(int i=0;i<${smoke?'52':'88'};i++) {
+       for(int i=0;i<${steps};i++) {
          vec3 p=ro+rd*(start+(float(i)+jitter)*stepSize);
          ${smoke?`
          float h=(p.y-.8)/5.8;
          vec2 center=vec2(.12+.52*h+sin(h*8.-uTime*.35)*.3,cos(h*6.-uTime*.28)*.22);
          float radius=.38+h*.84;
          float envelope=exp(-dot(p.xz-center,p.xz-center)/(radius*radius)*2.2);
-         float cloud=fbm(p*vec3(2.2,1.5,2.2)+vec3(uSeed+uTime*.035,-uTime*.58,0));
-         float density=max(0.,cloud-.29)*envelope*smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y))*(uMode==2?.55:uMode==3?.5:1.)*uSmokeAmount;
+         float heightFade=smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y));
+         ${animatedSmoke?'if(envelope*heightFade*uSmokeAmount<.001)continue;':''}
+         float cloud=fbm(p*vec3(2.2,1.5,2.2)+vec3(uSeed+uTime*.035,-uTime*${animatedSmoke?'.90':'.58'},0));
+         float density=max(0.,cloud-.29)*envelope*heightFade*(uMode==2?.55:uMode==3?.5:1.)*uSmokeAmount;
          float alpha=1.-exp(-density*stepSize*1.28);
          vec3 color=mix(vec3(.36,.23,.14),uSmokeColor,smoothstep(1.,3.8,p.y));
          color*=.8+cloud*.65;

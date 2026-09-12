@@ -16,6 +16,7 @@ import { addDirtClearing, groundHeight, seatOnGround } from './ground.js';
 import { addStoneRing } from './rocks.js';
 import { createCoalMaterial } from './coals.js';
 import { burningMaterial, createBurnVisuals, updateBurnVisuals } from './burn-visuals.js';
+import { createLogMesh, createBarkDetails, sampleLogSurface } from './log-geometry.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -39,7 +40,10 @@ export class BonfireViewer {
  constructor(container) {
   this.container=container;this.scenes=new Map();this.cloud=cloudTexture();this.detail='full';
   this.paused=false;this.speed=1;this.frameCount=0;this.depthDirty=true;this.lastTick=null;this.lastDraw=0;this.needsRender=false;this.lastShadow=0;
-  this.renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance',preserveDrawingBuffer:true});
+  // Antialias the offscreen scene, not the final full-screen canvas as well.
+  this.renderer=new THREE.WebGLRenderer({antialias:false,alpha:false,powerPreference:'default'});
+  this.renderer.info.autoReset=false;
+  this.renderSize=new THREE.Vector2();this.depthPassCount=0;
   this.shaderErrors=[];
   this.renderer.debug.onShaderError=(gl,program,vertex,fragment)=>{
     const detail=[gl.getProgramInfoLog(program),gl.getShaderInfoLog(vertex),gl.getShaderInfoLog(fragment)].filter(Boolean).join('\n');
@@ -60,6 +64,7 @@ export class BonfireViewer {
   this.controls.addEventListener('change',()=>{this.depthDirty=true;this.queueRender();});
   this.depthTarget=new THREE.WebGLRenderTarget(1,1,{minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter});
   this.depthTarget.depthTexture=new THREE.DepthTexture(1,1,THREE.UnsignedIntType);
+  this.depthMaterial=new THREE.MeshDepthMaterial({colorWrite:false});
   // The composer renders offscreen, so canvas antialiasing alone cannot smooth stone edges.
   const sceneTarget=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType,samples:4});
   this.composer=new EffectComposer(this.renderer,sceneTarget);
@@ -89,8 +94,11 @@ export class BonfireViewer {
  }
  resize() {
   const w=this.container.clientWidth,h=this.container.clientHeight;if(!w||!h)return;
+  // Bound ray-marching and HDR buffers on large/retina displays while retaining MSAA edges.
+  const ratio=this.config?.animated?Math.min(devicePixelRatio,1.5,Math.sqrt(1500000/(w*h))):Math.min(devicePixelRatio,1.65);
+  if(this.renderer.getPixelRatio()!==ratio){this.renderer.setPixelRatio(ratio);this.composer.setPixelRatio(ratio);}
   this.renderer.setSize(w,h);this.composer.setSize(w,h);
-  const ratio=this.renderer.getPixelRatio();this.depthTarget.setSize(w*ratio,h*ratio);
+  this.renderer.getDrawingBufferSize(this.renderSize);this.depthTarget.setSize(this.renderSize.x,this.renderSize.y);
   this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.queueRender();
   this.depthDirty=true;
  }
@@ -100,9 +108,8 @@ export class BonfireViewer {
   this.current=this.scenes.get(config.id);this.renderPass.scene=this.current.scene;
   this.current.burnSpeed=this.speed;
   this.lastTick=null;this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;
-  const pixelRatio=Math.min(devicePixelRatio,config.animated?1.5:1.65);
-  this.renderer.setPixelRatio(pixelRatio);this.composer.setPixelRatio(pixelRatio);
   this.renderer.toneMappingExposure=config.exposure;this.bloom.strength=config.bloom;
+  this.bloom.enabled=config.bloom>0;
   this.finish.uniforms.uMode.value=config.mode;
   this.resize();this.setView('full');
   this.audio?.update(this.current,config.animated&&!this.paused&&!document.hidden);
@@ -119,7 +126,7 @@ export class BonfireViewer {
  }
  setLayer(key,value) {
    if(!this.current)return;
-   if(key==='glow')this.bloom.strength=value?this.config.bloom:0;
+   if(key==='glow'){this.bloom.strength=value?this.config.bloom:0;this.bloom.enabled=this.bloom.strength>0;}
    else if(this.current.layers[key])this.current.layers[key].visible=value;
    this.queueRender();
  }
@@ -176,16 +183,26 @@ export class BonfireViewer {
  render() {
   if(!this.current)return;
   const {scene,volumes,layers}=this.current;
+  this.renderer.info.reset();
   this.camera.updateMatrixWorld();
   // Rebuild depth when the camera moves or a log burns, settles, or sheds char.
   if(this.depthDirty){
     const hidden=[layers.flames,layers.smoke,layers.sparks,layers.steam],vis=hidden.map(g=>g.visible);
     hidden.forEach(g=>g.visible=false);
-    this.renderer.setRenderTarget(this.depthTarget);this.renderer.render(scene,this.camera);this.renderer.setRenderTarget(null);
-    hidden.forEach((g,i)=>g.visible=vis[i]);this.depthDirty=false;
+    const override=scene.overrideMaterial,shadowUpdate=this.renderer.shadowMap.needsUpdate;
+    // Only positions/depth are needed here; skip wood/coal shaders and leave shadows for the color pass.
+    scene.overrideMaterial=this.depthMaterial;this.renderer.shadowMap.needsUpdate=false;
+    try{
+      this.renderer.setRenderTarget(this.depthTarget);this.renderer.render(scene,this.camera);
+      this.depthPassCount++;
+    }finally{
+      this.renderer.setRenderTarget(null);scene.overrideMaterial=override;
+      this.renderer.shadowMap.needsUpdate=shadowUpdate;
+      hidden.forEach((g,i)=>g.visible=vis[i]);
+    }
+    this.depthDirty=false;
   }
-  const size=new THREE.Vector2();this.renderer.getDrawingBufferSize(size);
-  for(const v of volumes){const u=v.material.uniforms;u.uResolution.value.copy(size);u.uInvProjection.value.copy(this.camera.projectionMatrixInverse);u.uCameraWorld.value.copy(this.camera.matrixWorld);}
+  for(const v of volumes){const u=v.material.uniforms;u.uResolution.value.copy(this.renderSize);u.uInvProjection.value.copy(this.camera.projectionMatrixInverse);u.uCameraWorld.value.copy(this.camera.matrixWorld);}
   this.composer.render();
   this.frameCount++;
   if(this.onRender)this.onRender();
@@ -213,6 +230,7 @@ export class BonfireViewer {
   const rim=new THREE.DirectionalLight('#ffbe70',hybrid?.045:mode===3?2:.4);rim.position.set(0,3,-5);scene.add(rim);
   const barkMat=new THREE.MeshStandardMaterial({map:wood.bark,bumpMap:wood.bark,bumpScale:.04,roughness:.99,emissiveMap:wood.emission,emissive:'#ffb68b',emissiveIntensity:mode===4?1.65:.9});
   const endMat=new THREE.MeshStandardMaterial({map:wood.end,bumpMap:wood.end,bumpScale:.025,roughness:.95,emissiveMap:wood.endGlow,emissive:'#ff5310',emissiveIntensity:1.4});
+  const exposedMat=new THREE.MeshStandardMaterial({map:wood.exposed,bumpMap:wood.exposed,bumpScale:.006,roughness:.96,emissiveMap:wood.emission,emissive:'#ff6319',emissiveIntensity:.6});
   if(mode===1){barkMat.flatShading=true;barkMat.bumpScale=0;barkMat.color.set('#c39569');}
   if(mode===2){barkMat.color.set('#b6ada2');barkMat.emissiveIntensity=.45;endMat.emissiveIntensity=.2;}
   if(mode===3){barkMat.metalness=.7;barkMat.roughness=.26;barkMat.emissiveIntensity=1.8;}
@@ -230,26 +248,24 @@ export class BonfireViewer {
   const ashMat=new THREE.MeshStandardMaterial({color:mode===2?'#dbd5c7':'#888379',roughness:1,flatShading:true});
   for(let li=0;li<logDefs.length;li++) {
     const [aa,bb,radius]=logDefs[li],a=new THREE.Vector3(...aa),b=new THREE.Vector3(...bb);
-    const dir=b.clone().sub(a),length=dir.length(),sides=mode===1?8:22;
-    const geo=new THREE.CylinderGeometry(radius*.88,radius,length,sides,mode===1?5:22,false);
-    const pos=geo.attributes.position;
-    for(let i=0;i<pos.count;i++){
-      const y=pos.getY(i),theta=Math.atan2(pos.getZ(i),pos.getX(i));
-      const f=1+Math.sin(theta*7+y*8+li)*.035+Math.cos(theta*11-y*5)*.02;
-      pos.setX(i,pos.getX(i)*f);pos.setZ(i,pos.getZ(i)*f);
-    }
-    geo.computeVertexNormals();
+    const dir=b.clone().sub(a),length=dir.length();
     const burnUniforms={uWood:{value:1},uChar:{value:0},uHeat:{value:0}};
     const materials=hybrid?[burningMaterial(barkMat,burnUniforms),burningMaterial(endMat,burnUniforms,true)]:[barkMat,endMat];
-    const log=mesh(opaque,geo,materials,a.clone().add(b).multiplyScalar(.5));log.quaternion.setFromUnitVectors(UP,dir.clone().normalize());
+    const log=createLogMesh({radius,length,seed:config.seed+li*7919,faceted:mode===1},...materials);
+    const geo=log.geometry,profile=geo.userData.profile;
+    log.position.copy(a).lerp(b,.5);log.castShadow=true;log.receiveShadow=true;opaque.add(log);
+    log.quaternion.setFromUnitVectors(UP,dir.clone().normalize());
+    const barkDetails=createBarkDetails(profile),exposedMaterial=hybrid?burningMaterial(exposedMat,burnUniforms,true):exposedMat;
+    mesh(log,barkDetails.exposed,exposedMaterial);
+    mesh(log,barkDetails.peeling,[materials[0],exposedMaterial]);
     log.userData.length=length;log.userData.burnUniforms=burnUniforms;logMeshes.push(log);
     log.updateMatrixWorld();
     log.userData.baseInverse=log.matrixWorld.clone().invert();
-    if(mode===2){
+    if(mode===2&&!hybrid){
       const outline=new THREE.LineSegments(new THREE.EdgesGeometry(geo,27),new THREE.LineBasicMaterial({color:'#342e29',transparent:true,opacity:.85}));log.add(outline);
       for(let j=0;j<17;j++){
         const theta=j/17*Math.PI*2,points=[];
-        for(let k=0;k<=26;k++){const t=k/26,y=(t-.5)*length,rr=radius*(.94-y/length*.1)+.004;points.push(V(Math.cos(theta+Math.sin(t*14+j)*.007)*rr,y,Math.sin(theta+Math.sin(t*14+j)*.007)*rr));}
+        for(let k=0;k<=26;k++){const t=k/26;points.push(sampleLogSurface(profile,theta+Math.sin(t*14+j)*.007,t,.004));}
         line(log,points,'#342e25',.58);
       }
     }
@@ -257,8 +273,7 @@ export class BonfireViewer {
     for(let k=0;k<(mode===1?10:45);k++){
       const theta=rand()*Math.PI*2,y=(rand()-.5)*length*.97;
       const chip=new THREE.DodecahedronGeometry(1,0);
-      const radiusAt=radius*(.94-y/length*.1);
-      const obj=new THREE.Object3D();obj.position.set(Math.cos(theta)*radiusAt,y,Math.sin(theta)*radiusAt);
+      const obj=new THREE.Object3D();obj.position.copy(sampleLogSurface(profile,theta,y/length+.5));
       obj.scale.set(.022+rand()*.025,.025+rand()*.07,.012+rand()*.014);obj.rotation.set(0,-theta,rand()*.4);
       obj.updateMatrix();chip.applyMatrix4(obj.matrix);
       if(hybrid)localChips.push(chip);else{chip.applyMatrix4(log.matrixWorld);flakeGeometries.push(chip);}

@@ -64,7 +64,17 @@ export function woodTextures(seed = 5, mode = 0) {
     }
   }
   for(let i=0;i<8000;i++){c.fillStyle=rand()>.5?'#b9a4851a':'#100b0833';c.fillRect(rand()*512,rand()*512,1,1);}
-  return { bark: texture(bark), emission: texture(emission), end: texture(end), endGlow: texture(endGlow) };
+  const [exposed, grain] = canvas(512);
+  grain.fillStyle = mode === 2 ? '#b3a998' : '#95764e'; grain.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 620; i++) {
+    const x = rand() * 512, shade = rand();
+    grain.beginPath(); grain.moveTo(x, -10);
+    for (let y = 0; y <= 522; y += 12) grain.lineTo(x + Math.sin(y * .014 + i) * (1 + rand() * 2), y);
+    grain.strokeStyle = shade > .55 ? `rgba(229,198,140,${.1 + rand() * .16})` : `rgba(53,31,15,${.07 + rand() * .23})`;
+    grain.lineWidth = .5 + rand() * 2; grain.stroke();
+  }
+  const exposedTexture = texture(exposed); exposedTexture.wrapT = THREE.RepeatWrapping;
+  return { bark: texture(bark), emission: texture(emission), end: texture(end), endGlow: texture(endGlow), exposed: exposedTexture };
 }
 
 export function cloudTexture() {

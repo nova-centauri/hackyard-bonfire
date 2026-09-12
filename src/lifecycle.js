@@ -27,9 +27,11 @@ export class BurnCycle {
   }
   makeLog(slot, initial = false) {
     const r = this.random, wood = initial ? .24 + r() * .7 : 1;
+    // Burning logs have already dried; waiting logs span seasoned to wet wood.
+    const moisture = initial ? .008 + r() * .034 : .07 + r() * .28;
     return { slot, id: ++this.serial, phase: initial ? (wood < .45 ? 'charred' : 'burning') : 'queued',
       wood, char: initial ? Math.min(1 - wood, .07 + (1 - wood) * .16) : 0, ash: initial ? (1 - wood) * .1 : 0,
-      moisture: initial ? 0 : .10 + r() * .11, temperature: initial ? .72 + r() * .2 : .025,
+      moisture, initialMoisture: moisture, temperature: initial ? .72 + r() * .2 : .025,
       flame: initial ? .55 + r() * .3 : 0, addedAt: initial ? -r() * 260 : null,
       scale: .91 + r() * .15, angle: (r() - .5) * .20, offset: (r() - .5) * .16,
       density: .86 + r() * .3, shed: 0, shedNotice: 0, hot: initial, everLit: initial,
@@ -41,6 +43,13 @@ export class BurnCycle {
   }
   get queued() { return this.logs.filter(l => l.phase === 'queued').length; }
   get canAdd() { return this.logs.some(l => l.phase === 'queued' || l.phase === 'ash'); }
+  // Retained heat is a reservoir, so a flame-free coal bed can still be healthy
+  // enough to ignite dry wood. Keep coalHeat as the shared rendering signal.
+  get coreHeat() { return this.coalHeat; }
+  get coreStatus() {
+    return this.coreHeat >= .8 ? 'Very hot' : this.coreHeat >= .55 ? 'Healthy' : this.coreHeat >= .3 ? 'Warming' : this.coreHeat >= .08 ? 'Fading' : 'Cold';
+  }
+  get burnRateMultiplier() { return .65 + this.coreHeat * 1.1; }
   addLog() {
     let log = this.logs.find(l => l.phase === 'queued');
     if (!log) {
@@ -72,7 +81,8 @@ export class BurnCycle {
     const active = this.logs.filter(l => l.phase !== 'queued' && l.phase !== 'ash');
     const oldFlames = this.logs.map(l => l.flame);
     const oldCoalHeat = this.coalHeat;
-    let flameSum = 0;
+    const coreBurnRate = this.burnRateMultiplier;
+    let flameSum = 0, evaporated = 0;
     for (const log of active) {
       let neighbors = 0;
       for (const other of active) if (other !== log) {
@@ -82,13 +92,17 @@ export class BurnCycle {
       const bedContact = log.slot < 3 ? .86 : .71;
       const target = clamp(oldCoalHeat * bedContact + neighbors + oldFlames[log.slot] * .57);
       log.temperature += (target - log.temperature) * (1 - Math.exp(-dt / (log.moisture > .06 ? 55 : 24)));
-      const dry = dt * .00115 * Math.max(0, log.temperature - .14);
-      log.moisture = Math.max(0, log.moisture - dry);
+      const dry = Math.min(log.moisture, dt * .00115 * Math.max(0, log.temperature - .14));
+      log.moisture -= dry;
+      // Evaporation takes energy from the wood and bed before it can burn.
+      log.temperature = Math.max(0, log.temperature - dry * .7);
+      evaporated += dry;
       const ignition = log.moisture < .055 && log.temperature > .39 && log.wood > .006;
       const targetFlame = ignition ? clamp((log.temperature - .35) * 2.2) * Math.min(1, log.wood / .17) : 0;
       log.flame += (targetFlame - log.flame) * (1 - Math.exp(-dt / 5));
       if (log.flame < .0005) log.flame = 0;
-      const consumed = Math.min(log.wood, dt * BURN_SETTINGS.woodRate * log.flame / log.density);
+      const moistureBurnRate = clamp(1 - log.moisture * 1.8, .15, 1);
+      const consumed = Math.min(log.wood, dt * BURN_SETTINGS.woodRate * log.flame * coreBurnRate * moistureBurnRate / log.density);
       log.wood -= consumed; log.char += consumed * .26; log.ash += consumed * .035;
       const charBurn = log.temperature > .10 ? Math.min(log.char, dt * BURN_SETTINGS.charRate * log.temperature * Math.min(1, log.char / .025)) : 0;
       log.char -= charBurn; log.ash += charBurn * .8; this.ashMass += charBurn * .2;
@@ -125,7 +139,7 @@ export class BurnCycle {
     }
     const coalBurn = this.coalHeat > .055 ? Math.min(this.coalMass, dt * .00055 * (.15 + this.coalHeat) * Math.min(1, this.coalMass * 8)) : 0;
     this.coalMass -= coalBurn; this.ashMass += coalBurn;
-    this.coalHeat = clamp(this.coalHeat + flameSum * dt * .0011 + coalBurn * 1.8 - this.coalHeat * dt * BURN_SETTINGS.cooling);
+    this.coalHeat = clamp(this.coalHeat + flameSum * dt * .0011 + coalBurn * 1.8 - evaporated * .5 - this.coalHeat * dt * BURN_SETTINGS.cooling);
     if (this.coalHeat < .003 && flameSum < .001) this.coalHeat = 0;
   }
   updateSummary() {

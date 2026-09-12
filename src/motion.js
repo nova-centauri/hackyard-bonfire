@@ -26,7 +26,7 @@ export function updateStudyMotion(study) {
   if (!motion) return;
   const time = study.animationTime;
   for (const uniform of motion.uniforms) uniform.value = time;
-  const driftSpeed = 1.12;
+  const driftSpeed = 1.55;
   const cycle = study.cycle;
   const firePower = cycle ? Math.min(1, cycle.flame / 3.2) : 1;
   const coalHeat = cycle ? cycle.coalHeat : 1;

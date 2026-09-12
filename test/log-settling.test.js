@@ -127,3 +127,46 @@ test('twig flame shells and attached sparks follow their shrinking fuel into the
   assert.ok(Math.abs(spark.position.y - .19) < 1e-8);
   assert.equal(spark.position.x, .3); assert.equal(spark.position.z, -.2);
 });
+
+test('stable fuel reuses depth and instance buffers while heat and flame uniforms keep updating', () => {
+  const study = visualStudy();
+  assert.equal(updateBurnVisuals(study, true), true);
+  const view = study.burnVisuals;
+  const buffers = [view.ash.instanceMatrix, study.coals.instanceMatrix, view.flakes.instanceMatrix,
+    view.impactEmbers.geometry.attributes.position, view.impactEmbers.geometry.attributes.aSize];
+  const versions = buffers.map(buffer => buffer.version);
+  for (let frame = 1; frame <= 15; frame++) {
+    study.animationTime = frame / 30;
+    study.cycle.logs[0].temperature = .3 + frame * .02;
+    study.cycle.logs[0].flame = .4 + frame * .01;
+    study.cycle.updateSummary();
+    assert.equal(updateBurnVisuals(study), false, 'changing shader heat does not change scene depth');
+  }
+  assert.deepEqual(buffers.map(buffer => buffer.version), versions);
+  assert.equal(study.logMeshes[0].userData.burnUniforms.uHeat.value, .6);
+  assert.ok(Math.abs(study.volumes[0].material.uniforms.uFuel.value[0] - .55) < 1e-6);
+  assert.equal(view.flakes.visible, false);
+  assert.equal(view.impactEmbers.visible, false);
+});
+
+test('coal changes, ash deposits, and falling fuel invalidate depth only when their geometry changes', () => {
+  const study = visualStudy(); updateBurnVisuals(study, true);
+  study.cycle.coalMass = .1;
+  assert.equal(updateBurnVisuals(study), true);
+  const coalVersion = study.coals.instanceMatrix.version;
+  assert.equal(updateBurnVisuals(study), false);
+  assert.equal(study.coals.instanceMatrix.version, coalVersion);
+  study.animationTime = .1; study.cycle.ashDeposits[0] = .5;
+  assert.equal(updateBurnVisuals(study), true);
+  const ashVersion = study.burnVisuals.ash.instanceMatrix.version;
+  study.animationTime = .2;
+  assert.equal(updateBurnVisuals(study), false);
+  assert.equal(study.burnVisuals.ash.instanceMatrix.version, ashVersion);
+  study.cycle.logs[0].phase = 'ash'; study.cycle.logs[0].wood = 0;
+  study.animationTime += 1 / 30;
+  assert.equal(updateBurnVisuals(study), true, 'removing a support changes depth immediately');
+  const previousY = study.logMeshes[1].position.y;
+  study.animationTime += 1 / 30;
+  assert.equal(updateBurnVisuals(study), true, 'falling wood keeps depth current on every frame');
+  assert.ok(study.logMeshes[1].position.y < previousY);
+});
