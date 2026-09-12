@@ -80,6 +80,7 @@ export function updateStudyMotion(study) {
     const u = volume.material.uniforms;
     if (u.uImpact) u.uImpact.value = impact;
     if (u.uWind && wind) u.uWind.value.set(wind.x, wind.z);
+    if (u.uSmokeLight) u.uSmokeLight.value = Math.max(firePower, coalLightPower * .25);
   }
   if (motion.embers) {
     const u = motion.embers.uniforms;
@@ -87,9 +88,12 @@ export function updateStudyMotion(study) {
     if (wind) u.uWind.value.copy(wind);
     motion.embers.visible = firePower > .002 || (cycle?.coalMass > .005 && coalHeat > .12);
   }
-  if (motion.steam && cycle) for (let i = 0; i < motion.steam.logs; i++) {
-    const fuel = cycle.logs[i];
-    motion.steam.setStrength(i, !fuel || fuel.phase === 'queued' || fuel.phase === 'ash' ? 0 : Math.min(1, fuel.moisture * 10) * fuel.temperature);
+  if (motion.steam) {
+    if (wind) motion.steam.uniforms.uWind.value.set(wind.x, wind.z);
+    if (cycle) for (let i = 0; i < motion.steam.logs; i++) {
+      const fuel = cycle.logs[i];
+      motion.steam.setStrength(i, !fuel || fuel.phase === 'queued' || fuel.phase === 'ash' ? 0 : Math.min(1, fuel.moisture * 10) * fuel.temperature);
+    }
   }
   updateFlameCentroid(study);
   // Firelight breathes with layered noise rather than a pair of sines, and it

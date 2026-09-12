@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { constrainFirelight, createMotionState, firelightMood, updateFlameCentroid, updateStudyMotion } from '../src/motion.js';
 import { createHybridFire } from '../src/hybrid-fire.js';
+import { createVolume } from '../src/volume.js';
 import { createEmbers } from '../src/embers.js';
 import { createSteam } from '../src/steam.js';
 import { createWeather } from '../src/weather.js';
@@ -12,6 +13,8 @@ function motionStudy() {
   const layers = { flames: new THREE.Group(), smoke: new THREE.Group(), sparks: new THREE.Group(), steam: new THREE.Group() };
   const fire = createHybridFire({ fireVariant: 2, seed: 22 }, null, Array.from({ length: 7 }, (_, i) => [[-1, .2 + i * .1, 0], [1, .2 + i * .1, 0], .2]));
   layers.flames.add(fire);
+  const smoke = createVolume('smoke', { animated: true, mode: 5, seed: 22, flameScale: 1, smoke: '#77817e' }, null);
+  layers.smoke.add(smoke);
   const embers = createEmbers({ seed: 22, sources: fire.material.uniforms.uSources.value, fuel: fire.material.uniforms.uFuel.value });
   layers.sparks.add(embers);
   const steam = createSteam({ logs: 7, map: new THREE.DataTexture(new Uint8Array(4), 1, 1) }); layers.steam.add(steam);
@@ -20,18 +23,20 @@ function motionStudy() {
   const coalMaterial = new THREE.MeshStandardMaterial({ emissiveIntensity: 1.65 }), barkMaterial = new THREE.MeshStandardMaterial({ emissiveIntensity: .9 });
   Object.assign(coalMaterial.userData, { bedAsh: { value: 0 }, time: { value: 0 }, heat: { value: 1 }, impact: { value: 0 } });
   const cycle = { flame: 2.6, coalHeat: .7, coalMass: .4, ashMass: .1, time: 30, logs: Array.from({ length: 7 }, (_, i) => ({ phase: i < 3 ? 'burning' : 'queued', moisture: i === 1 ? .2 : .02, temperature: .8 })) };
-  const study = { animationTime: 0, volumes: [fire], layers, cycle, flameCentroid: new THREE.Vector3(), flameHeight: 0, weather: createWeather(22) };
+  const study = { animationTime: 0, volumes: [fire, smoke], layers, cycle, flameCentroid: new THREE.Vector3(), flameHeight: 0, weather: createWeather(22) };
   const clearingLight = createClearingLight();
   study.motion = createMotionState(layers, { embers, steam, lights: [light, core], coalMaterial, barkMaterial, clearingLight });
-  return { study, fire, embers, steam, light, core, clearingLight };
+  return { study, fire, smoke, embers, steam, light, core, clearingLight };
 }
 
-test('wind reaches the fire, smoke and embers, and the firelight follows the flames', () => {
-  const { study, fire, embers, steam, light } = motionStudy();
+test('wind reaches the fire, smoke, steam and embers, and the firelight follows the flames', () => {
+  const { study, fire, smoke, embers, steam, light } = motionStudy();
   study.weather.update = () => { study.weather.gust = 1; study.weather.wind.set(1.1, 0, .3); return study.weather; };
   study.animationTime = 4; updateStudyMotion(study);
   assert.deepEqual(fire.material.uniforms.uWind.value.toArray(), [1.1, .3]);
+  assert.deepEqual(smoke.material.uniforms.uWind.value.toArray(), [1.1, .3]);
   assert.deepEqual(embers.uniforms.uWind.value.toArray(), [1.1, 0, .3]);
+  assert.deepEqual(steam.uniforms.uWind.value.toArray(), [1.1, .3]);
   assert.equal(embers.uniforms.uTime.value, 4); assert.equal(steam.uniforms.uTime.value, 4);
   assert.ok(Math.abs(embers.uniforms.uPower.value - Math.min(1, 2.6 / 3.2)) < 1e-9);
   // Sources sit on y = .3..; the light rides above their fuel-weighted centre and leans into the wind.
@@ -43,6 +48,26 @@ test('wind reaches the fire, smoke and embers, and the firelight follows the fla
   // Steam only leaves wood that is on the fire, scaled by its moisture.
   assert.equal(steam.uniforms.uStrength.value[3], 0);
   assert.ok(steam.uniforms.uStrength.value[1] > steam.uniforms.uStrength.value[0]);
+  study.cycle.logs[0].moisture = 0;
+  study.cycle.logs[1].temperature = 0;
+  study.cycle.logs[2].phase = 'ash';
+  updateStudyMotion(study);
+  assert.deepEqual(Array.from(steam.uniforms.uStrength.value), Array(7).fill(0), 'dry, cold, exhausted and queued wood emits no steam');
+});
+
+test('smoke illumination follows flame power, remaining coals and extinction', () => {
+  const { study, smoke } = motionStudy(), light = smoke.material.uniforms.uSmokeLight;
+  updateStudyMotion(study);
+  assert.ok(Math.abs(light.value - study.cycle.flame / 3.2) < 1e-9, 'flames illuminate the main plume');
+  study.cycle.flame = 0;
+  updateStudyMotion(study);
+  assert.equal(light.value, study.cycle.coalHeat * .25, 'hot coals retain a weaker glow');
+  study.cycle.coalMass = 0;
+  updateStudyMotion(study);
+  assert.equal(light.value, 0, 'an empty coal bed cannot light smoke');
+  study.cycle.coalMass = .4; study.cycle.coalHeat = 0;
+  updateStudyMotion(study);
+  assert.equal(light.value, 0, 'cold coals cannot light smoke');
 });
 
 test('firelight flicker is noise-driven, gusts widen it, and a dying fire dims and reddens the light', () => {

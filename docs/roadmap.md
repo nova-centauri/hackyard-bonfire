@@ -172,3 +172,11 @@ soil. This remains an ambient campfire, with no new controls or activities.
   connecting to its previous lifetime. A browser test executes the actual
   vertex shader at birth and recycling boundaries, including the old formula
   as a failing comparison (`test/browser/ember-trails.html`).
+- 2026-09-12 — CI portability: replaced a macOS golden contact trajectory
+  with same-runtime isolated/interleaved simulations while retaining the
+  allocation budget. Node 22 tests and the GitHub Linux run pass.
+- 2026-09-12 — Smoke balance: log-end moisture becomes dim, stretched,
+  overlapping wisps with staggered phases and shared wind. The main smoke
+  column catches more light above the flames and remains visible higher up;
+  no extra particle draws or volume samples. GPU checks cover zero emission,
+  light response, wind and low-sample integration.

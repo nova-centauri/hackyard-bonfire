@@ -20,7 +20,7 @@ export function createVolume(kind, config, depthTexture) {
  const geometry=new THREE.BoxGeometry(size.x,size.y,size.z);geometry.translate(...bounds[0].clone().add(bounds[1]).multiplyScalar(.5).toArray());
  const material=new THREE.ShaderMaterial({
    transparent:true,depthWrite:false,depthTest:false,side:THREE.BackSide,
-   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0},uSmokeAmount:{value:1},uSteps:{value:steps},uOctaves:{value:3},uWind:{value:new THREE.Vector2()}},
+   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0},uSmokeAmount:{value:1},uSmokeLight:{value:1},uSteps:{value:steps},uOctaves:{value:3},uWind:{value:new THREE.Vector2()}},
    vertexShader:`varying vec3 vPosition;void main(){vPosition=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
    fragmentShader:`precision highp float;
      varying vec3 vPosition;
@@ -28,7 +28,7 @@ export function createVolume(kind, config, depthTexture) {
      uniform vec2 uResolution;
      uniform mat4 uInvProjection,uCameraWorld;
      uniform vec3 uLo,uHi,uSmokeColor;
-     uniform float uSeed,uScale,uTime,uSmokeAmount;
+     uniform float uSeed,uScale,uTime,uSmokeAmount,uSmokeLight;
      uniform int uMode,uSteps,uOctaves;
      uniform vec2 uWind;
      ${noise}
@@ -66,7 +66,9 @@ export function createVolume(kind, config, depthTexture) {
        if(end<=start) discard;
        vec4 sum=vec4(0.);
        float stepSize=(end-start)/float(uSteps);
-       float jitter=hash(vec3(gl_FragCoord.xy,uSeed));
+       // Smoke is a smooth field: keep samples near the interval midpoint so
+       // low tiers do not turn its newly visible folds into stippled noise.
+       float jitter=${animatedSmoke ? 'mix(.35,.65,hash(vec3(gl_FragCoord.xy,uSeed)))' : 'hash(vec3(gl_FragCoord.xy,uSeed))'};
        for(int i=0;i<uSteps;i++) {
          vec3 p=ro+rd*(start+(float(i)+jitter)*stepSize);
          ${smoke?`
@@ -83,18 +85,19 @@ export function createVolume(kind, config, depthTexture) {
          float radius=.38+h*.84;
          `}
          float envelope=exp(-dot(p.xz-center,p.xz-center)/(radius*radius)*2.2);
-         float heightFade=smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y));
+         float heightFade=${animatedSmoke ? 'smoothstep(.85,1.85,p.y)*(1.-smoothstep(4.8,6.7,p.y))' : 'smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y))'};
          ${animatedSmoke?'if(envelope*heightFade*uSmokeAmount<.001)continue;':''}
          float cloud=fbm(p*vec3(2.2,1.5,2.2)+vec3(uSeed+uTime*.035,-uTime*${animatedSmoke?'1.10':'.58'},0));
          float density=max(0.,cloud-.29)*envelope*heightFade*(uMode==2?.55:uMode==3?.5:1.)*uSmokeAmount;
-         float alpha=1.-exp(-density*stepSize*1.28);
+         float alpha=1.-exp(-density*stepSize*${animatedSmoke ? '2.05' : '1.28'});
          vec3 color=mix(vec3(.36,.23,.14),uSmokeColor,smoothstep(1.,3.8,p.y));
          color*=.8+cloud*.65;
-         // Only the lower smoke catches the firelight; the plume disappears into night.
+         // Smoke starts catching light above the flames, before the plume
+         // widens. A faint neutral scattering term carries its folds into the
+         // night; fading both its light and opacity here used to erase them.
          if(uMode==5){
-           float firelight=exp(-max(0.,p.y-1.3)*.9);
-           color=mix(vec3(.018,.022,.027),vec3(.40,.19,.065),firelight)*(.75+cloud*.35);
-           alpha*=1.-smoothstep(3.4,6.2,p.y);
+           float firelight=exp(-max(0.,p.y-1.35)*.42)*clamp(uSmokeLight,0.,1.);
+           color=mix(vec3(.075,.085,.10),vec3(.48,.30,.16),firelight)*(.8+cloud*.4);
          }
          `:`
          float density=flame(p);

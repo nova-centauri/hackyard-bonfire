@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Smoke GPU rendering check</title>
+<style>body{margin:2rem;background:#171717;color:#eee;font:15px/1.5 monospace}pre{white-space:pre-wrap}canvas{display:none}.pass{color:#9fd899}.fail{color:#ff9696}</style>
+<h1>Smoke GPU rendering check</h1>
+<p id="status">Rendering the real smoke and log-end steam shaders…</p>
+<pre id="report"></pre>
+<script type="module">
+import * as THREE from 'three';
+import { createVolume } from '../../src/volume.js';
+import { createSteam } from '../../src/steam.js';
+import { studies } from '../../src/styles.js';
+
+const status = document.querySelector('#status'), report = document.querySelector('#report');
+const checks = {}, metrics = {}, shaderErrors = [], disposables = [];
+let renderer;
+try {
+  const size = 160;
+  renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+  renderer.setSize(size, size); renderer.setPixelRatio(1);
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.debug.checkShaderErrors = true;
+  renderer.debug.onShaderError = (gl, program, vertex, fragment) => shaderErrors.push({
+    program: gl.getProgramInfoLog(program), vertex: gl.getShaderInfoLog(vertex), fragment: gl.getShaderInfoLog(fragment),
+  });
+  const gl = renderer.getContext();
+  const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false });
+  target.texture.colorSpace = THREE.LinearSRGBColorSpace;
+  // A complete far-plane depth texture is essential: an unbound sampler reads
+  // zero and silently occludes the whole volume, even when its shader compiles.
+  const depth = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  depth.needsUpdate = true;
+  const steamMap = await new THREE.TextureLoader().loadAsync('/textures/smoke-puff.png');
+  disposables.push(target, depth, steamMap);
+  const pixels = new Uint8Array(size * size * 4), scene = new THREE.Scene();
+
+  function capture(mesh, camera) {
+    scene.clear(); scene.add(mesh);
+    camera.updateMatrixWorld();
+    if (mesh.material.uniforms.uDepth) {
+      const uniforms = mesh.material.uniforms;
+      uniforms.uResolution.value.set(size, size);
+      uniforms.uInvProjection.value.copy(camera.projectionMatrixInverse);
+      uniforms.uCameraWorld.value.copy(camera.matrixWorld);
+    }
+    renderer.setRenderTarget(target); renderer.clear(); renderer.render(scene, camera);
+    renderer.readRenderTargetPixels(target, 0, 0, size, size, pixels);
+    const error = gl.getError();
+    if (error !== gl.NO_ERROR) throw new Error(`WebGL error: ${error}`);
+    if (shaderErrors.length) throw new Error('Shader compilation failed');
+    let luminance = 0, alpha = 0, peakLuminance = 0, peakAlpha = 0, litPixels = 0, xMoment = 0, maxChannel = 0;
+    for (let pixel = 0; pixel < size * size; pixel++) {
+      const offset = pixel * 4;
+      const light = (.2126 * pixels[offset] + .7152 * pixels[offset + 1] + .0722 * pixels[offset + 2]) / 255;
+      luminance += light; alpha += pixels[offset + 3] / 255;
+      peakLuminance = Math.max(peakLuminance, light); peakAlpha = Math.max(peakAlpha, pixels[offset + 3] / 255);
+      if (light > .001) litPixels++;
+      xMoment += (pixel % size + .5) * light;
+      for (let channel = 0; channel < 4; channel++) maxChannel = Math.max(maxChannel, pixels[offset + channel]);
+    }
+    return { luminance, alpha, peakLuminance, peakAlpha, litPixels, centroidX: luminance ? xMoment / luminance : null, maxChannel };
+  }
+
+  const smokeCamera = new THREE.PerspectiveCamera(40, 1, .1, 40);
+  smokeCamera.position.set(0, 3.4, 12); smokeCamera.lookAt(0, 3.4, 0);
+  const smoke = createVolume('smoke', studies.find(study => study.id === 'wild-draft'), depth);
+  disposables.push(smoke.geometry, smoke.material);
+  const uniforms = smoke.material.uniforms;
+  uniforms.uTime.value = 7.4;
+  uniforms.uSteps.value = 40;
+  uniforms.uSmokeAmount.value = 0;
+  metrics.smokeOff = capture(smoke, smokeCamera);
+  uniforms.uSmokeAmount.value = 1;
+  uniforms.uSmokeLight.value = 0;
+  metrics.smokeUnlit = capture(smoke, smokeCamera);
+  uniforms.uSmokeLight.value = 1;
+  metrics.smokeLit = capture(smoke, smokeCamera);
+  uniforms.uSteps.value = 12;
+  metrics.smokeLowSamples = capture(smoke, smokeCamera);
+  uniforms.uSteps.value = 40;
+  metrics.sampleBrightnessRatio = metrics.smokeLowSamples.luminance / metrics.smokeLit.luminance;
+
+  // Negative control: restore the former height fade, optical density and
+  // nighttime lighting, preserving the actual raymarcher and noise functions.
+  // That combination erased the main plume by fading its light and alpha twice.
+  const currentShader = smoke.material.fragmentShader;
+  const previousShader = currentShader
+    .replace(/float heightFade=[^;]+;/, 'float heightFade=smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y));')
+    .replace(/float alpha=1\.-exp\(-density\*stepSize\*[\d.]+\);/, 'float alpha=1.-exp(-density*stepSize*1.28);')
+    .replace(/if\(uMode==5\)\{[^}]*\}/, `if(uMode==5){
+      float firelight=exp(-max(0.,p.y-1.3)*.9);
+      color=mix(vec3(.018,.022,.027),vec3(.40,.19,.065),firelight)*(.75+cloud*.35);
+      alpha*=1.-smoothstep(3.4,6.2,p.y);
+    }`);
+  if (previousShader === currentShader) throw new Error('Could not construct previous-smoke negative control');
+  smoke.material.fragmentShader = previousShader; smoke.material.needsUpdate = true;
+  metrics.previousSmoke = capture(smoke, smokeCamera);
+  metrics.smokeVisibilityGain = metrics.smokeLit.luminance / metrics.previousSmoke.luminance;
+  smoke.material.fragmentShader = currentShader; smoke.material.needsUpdate = true;
+
+  const steamCamera = new THREE.PerspectiveCamera(40, 1, .1, 20);
+  steamCamera.position.set(0, .55, 3); steamCamera.lookAt(0, .55, 0);
+  const steam = createSteam({ logs: 1, perLog: 15, map: steamMap });
+  disposables.push(steam.geometry, steam.material);
+  steam.uniforms.uTime.value = 7.4;
+  steam.setOrigin(0, new THREE.Vector3(0, 0, 0));
+  steam.setStrength(0, 0);
+  metrics.steamOff = capture(steam, steamCamera);
+  steam.setStrength(0, 1);
+  metrics.steamStill = capture(steam, steamCamera);
+  steam.uniforms.uWind.value.set(-.8, 0);
+  metrics.steamWindLeft = capture(steam, steamCamera);
+  steam.uniforms.uWind.value.set(.8, 0);
+  metrics.steamWindRight = capture(steam, steamCamera);
+  metrics.steamWindShift = metrics.steamWindRight.centroidX - metrics.steamWindLeft.centroidX;
+
+  // Broad, integrated bounds survive small driver differences; there are no
+  // golden pixels. Appearance and motion still receive a separate scene review.
+  checks.zeroSmokeIsTransparent = metrics.smokeOff.maxChannel === 0;
+  checks.mainSmokeIsVisible = metrics.smokeLit.luminance > 5 && metrics.smokeLit.litPixels > 100;
+  checks.firelightIlluminatesSmoke = metrics.smokeUnlit.luminance > 0 && metrics.smokeLit.luminance > metrics.smokeUnlit.luminance * 1.25;
+  checks.sampleCountPreservesBrightness = metrics.sampleBrightnessRatio > .7 && metrics.sampleBrightnessRatio < 1.3;
+  checks.previousSmokeWasSubstantiallyFainter = metrics.smokeVisibilityGain > 1.5;
+  checks.zeroSteamIsTransparent = metrics.steamOff.maxChannel === 0;
+  checks.steamIsVisibleAndTranslucent = metrics.steamStill.luminance > 1 && metrics.steamStill.litPixels > 30
+    && metrics.steamStill.peakLuminance < .25 && metrics.steamStill.peakAlpha < .6;
+  checks.windAdvectsSteam = metrics.steamWindLeft.luminance > 0 && metrics.steamWindRight.luminance > 0 && metrics.steamWindShift > 4;
+  checks.shadersAndWebGLAreHealthy = shaderErrors.length === 0;
+  const passed = Object.values(checks).every(Boolean);
+  status.textContent = passed ? 'PASS — smoke stays visible, translucent, wind-responsive and stable across quality levels.' : 'FAIL — inspect GPU measurements below.';
+  status.className = passed ? 'pass' : 'fail';
+  report.textContent = JSON.stringify({ passed, size, checks, metrics, shaderErrors }, null, 2);
+  document.documentElement.dataset.passed = String(passed);
+} catch (error) {
+  status.textContent = 'FAIL — ' + error.message; status.className = 'fail';
+  report.textContent = JSON.stringify({ passed: false, error: error.stack, checks, metrics, shaderErrors }, null, 2);
+  document.documentElement.dataset.passed = 'false';
+} finally {
+  for (const disposable of disposables) disposable.dispose();
+  renderer?.dispose();
+  document.documentElement.dataset.ready = 'true';
+}
+</script>
+</html>

@@ -52,6 +52,14 @@ render pass. The existing point light also reaches farther. Flame intensity
 and flicker drive the broad pool, while the smaller coal pool fades with
 both heat and remaining coal mass.
 
+Log-end moisture uses fifteen staggered, overlapping wisps per log in the
+same instanced draw. A soft density field supplies the shape; the puff
+texture adds subtle variation without opaque white islands. The wisps share
+the fire's wind and disappear as the wood dries. The main smoke volume
+catches light closer to the flame tips, then fades to dim gray scattering
+higher up. Its light follows flames and remaining hot coals independently
+of the smoke amount, with unchanged ray-march sample budgets.
+
 ## Level of detail
 
 `src/quality.js` defines five tiers. Everything in a tier is a runtime value
@@ -127,8 +135,9 @@ vector clones fell from 546,876 to 84,799 (84.5% fewer) and quaternion clones
 from 160,964 to zero. Across 30 alternating warmed runs, median total CPU
 time fell from 18.77 ms to 16.65 ms (11.3%). Positions, rotations and velocities
 were unchanged. These are CPU fixture measurements, not browser frame-rate
-gains; `test/settling-performance.test.js` checks the trajectory and allocation
-budget without a timing assertion.
+gains; `test/settling-performance.test.js` checks the allocation budget and
+compares isolated and interleaved simulations within the same runtime.
+It avoids a platform-specific golden trajectory and timing assertions.
 
 The combustion model also caches geometric exposure while a pose and fuel
 shape remain unchanged. Accelerated burn steps reuse the surface positions,
@@ -154,6 +163,9 @@ advance on every fixed step. No timing gain is claimed for this cache.
   cannot connect to its previous life. The old formula is a negative
   control. Completion sets the document's `data-ready="true"` and
   `data-passed="true"`; `#report` contains the numeric results.
+- `/test/browser/smoke.html` renders the real smoke and steam shaders into
+  small offscreen targets, checking extinction, lighting, wind, and similar
+  smoke brightness across sample budgets. It uses the same completion fields.
 - On real hardware, `renderer.info.render.calls` is exposed as
   `data-draw-calls`, and the governor's decisions are logged. A frame that
   cannot fit in 33 ms on a 60 Hz display shows as 50 ms intervals and will be

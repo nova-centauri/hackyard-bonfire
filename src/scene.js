@@ -408,7 +408,7 @@ export class BonfireViewer {
     if(li<3||hybrid)steamOrigins.push(a.clone().addScaledVector(dir.clone().normalize(),-.018));
   }
   // One instanced draw carries every steam puff; origins follow the log ends.
-  const steam=createSteam({logs:steamOrigins.length,perLog:15,map:this.cloud,color:mode===2&&!hybrid?'#7b807b':'#c0cace'});
+  const steam=createSteam({logs:steamOrigins.length,perLog:15,map:this.cloud,color:mode===2&&!hybrid?'#7b807b':'#818986'});
   steamOrigins.forEach((origin,li)=>steam.setOrigin(li,origin));layers.steam.add(steam);
   const coals=createCoalBed({seed:config.seed,mode,animated:hybrid,groundHeight:hybrid?groundHeight:()=>0});
   const coalMat=coals.material,obj=new THREE.Object3D();

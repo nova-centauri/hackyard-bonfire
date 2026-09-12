@@ -40,14 +40,27 @@ test('steam is a single instanced draw whose origins and strengths follow the lo
   const steam = createSteam({ logs: 7, perLog: 15, map: new THREE.DataTexture(new Uint8Array(4), 1, 1) });
   assert.equal(steam.geometry.instanceCount, 105);
   assert.equal(steam.geometry.attributes.aLog.count, 105);
+  assert.equal(steam.geometry.attributes.aSeed.count, 105);
   const logs = steam.geometry.attributes.aLog.array, phases = steam.geometry.attributes.aPhase.array;
-  assert.equal(logs[0], 0); assert.equal(logs[104], 6); assert.equal(phases[0], 0); assert.equal(phases[14], 1);
+  assert.equal(logs[0], 0); assert.equal(logs[104], 6);
+  finite(phases); finite(steam.geometry.attributes.aSeed.array);
+  assert.ok(phases.every(phase => phase >= 0 && phase < 1), 'no phase wraps to a duplicate endpoint');
+  for (let li = 0; li < 7; li++) {
+    const ages = Array.from(phases.slice(li * 15, (li + 1) * 15)).sort((a, b) => a - b);
+    assert.equal(new Set(ages).size, 15, 'each log has distinct wisps');
+    for (let k = 0; k < 15; k++) assert.ok(Math.abs((ages[(k + 1) % 15] - ages[k] + 1) % 1 - 1 / 15) < 1e-6, 'the plume stays evenly filled across recycling');
+  }
+  assert.equal(new Set(Array.from({ length: 7 }, (_, li) => phases[li * 15])).size, 7, 'logs do not release wisps in lockstep');
+  const repeat = createSteam({ logs: 7, perLog: 15 });
+  assert.deepEqual(repeat.geometry.attributes.aSeed.array, steam.geometry.attributes.aSeed.array, 'variation is deterministic');
+  repeat.geometry.dispose(); repeat.material.dispose();
   steam.setOrigin(2, new THREE.Vector3(1, 2, 3)); steam.setOrigin(9, new THREE.Vector3(9, 9, 9));
   assert.deepEqual(steam.uniforms.uOrigins.value[2].toArray(), [1, 2, 3]);
   assert.equal(steam.uniforms.uOrigins.value.length, 7, 'an out-of-range log is ignored');
   steam.setStrength(0, 4); steam.setStrength(1, .3);
   assert.equal(steam.uniforms.uStrength.value[0], 1); assert.ok(Math.abs(steam.uniforms.uStrength.value[1] - .3) < 1e-6);
   assert.equal(steam.material.transparent, true); assert.equal(steam.material.depthWrite, false);
+  assert.deepEqual(steam.uniforms.uWind.value.toArray(), [0, 0]);
 });
 
 test('twig segments and glows are mirrored into instanced meshes that follow the settling', () => {
