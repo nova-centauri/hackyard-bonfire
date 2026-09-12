@@ -42,6 +42,15 @@ export function updateFlameCentroid(study) {
   return weight;
 }
 
+// The fire's mood on the animation clock: `lively` (0..1) rises and falls over
+// tens of seconds, `dip` (0..1) is the brief, rare collapse of a flame sheet.
+// Both are pure functions of time, so they are identical at any frame rate.
+export function firelightMood(time) {
+  const agitation = smoothNoise(time * .09, 61) * .6 + smoothNoise(time * .023, 67) * .4;
+  const dip = Math.pow(Math.max(0, (smoothNoise(time * 1.1, 71) - .72) / .28), 2);
+  return { lively: agitation * agitation, dip };
+}
+
 export function updateStudyMotion(study) {
   const motion = study.motion;
   if (!motion) return;
@@ -70,19 +79,22 @@ export function updateStudyMotion(study) {
     motion.steam.setStrength(i, !fuel || fuel.phase === 'queued' || fuel.phase === 'ash' ? 0 : Math.min(1, fuel.moisture * 10) * fuel.temperature);
   }
   updateFlameCentroid(study);
-  // Firelight breathes with layered noise rather than a pair of sines, gusts
-  // deepen the flicker, and the main light follows the flames' centre so the
-  // shadows on the stones lean with the fire.
+  // Firelight breathes with layered noise rather than a pair of sines, and it
+  // is not stationary: a slow agitation envelope gives the fire calm spells
+  // and lively ones, a flame sheet occasionally tears away and the light dips
+  // for a moment, gusts deepen it all, and the main light follows the flames'
+  // centre so the shadows on the stones lean with the fire.
+  const { lively, dip } = firelightMood(time);
   motion.lights.forEach(({ light, intensity, home }, index) => {
     const noise = flicker(time * (index ? 1.35 : 1), index * 17);
-    const amplitude = index === 0 ? .16 + gust * .26 : .08;
-    const level = 1 + (noise - .5) * 2 * amplitude + impact * .32;
+    const amplitude = index === 0 ? .22 + lively * .2 + gust * .26 : .13 + lively * .08;
+    const level = (1 + (noise - .5) * 2 * amplitude + impact * .32) * (1 - dip * (index === 0 ? .3 : .16));
     light.intensity = intensity * Math.max(0, level) * (index === 0 ? firePower : coalHeat);
     if (index === 0 && study.flameCentroid) {
       const target = motion.lightTarget.copy(study.flameCentroid);
       target.y += .3 + .45 * firePower + .12 * study.flameHeight;
-      target.x += (smoothNoise(time * .7, 41) - .5) * .12 + (wind?.x || 0) * .18;
-      target.z += (smoothNoise(time * .6, 43) - .5) * .12 + (wind?.z || 0) * .18;
+      target.x += (smoothNoise(time * .7, 41) - .5) * (.12 + lively * .1) + (wind?.x || 0) * .18;
+      target.z += (smoothNoise(time * .6, 43) - .5) * (.12 + lively * .1) + (wind?.z || 0) * .18;
       if (dt === 0) light.position.copy(target); else light.position.lerp(target, 1 - Math.exp(-dt * 2.5));
       light.color.copy(EMBER_LIGHT).lerp(WARM, Math.min(1, firePower * 1.6));
     } else if (index === 0) light.position.copy(home);
@@ -94,6 +106,6 @@ export function updateStudyMotion(study) {
     motion.coalMaterial.userData.impact.value = impact;
   }
   if (cycle) motion.coalMaterial.userData.bedAsh.value = Math.min(1, cycle.ashMass / (cycle.coalMass + cycle.ashMass + .001)) * (1 - coalHeat * .7);
-  motion.barkMaterial.emissiveIntensity = motion.barkEmission * (1 + (flicker(time * .6, 5) - .5) * .09);
+  motion.barkMaterial.emissiveIntensity = motion.barkEmission * (1 + (flicker(time * .6, 5) - .5) * (.12 + lively * .08));
   if (cycle && motion.twigInstances?.glowMesh) motion.twigInstances.glowMesh.visible = cycle.time < 600 && firePower > .04;
 }

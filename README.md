@@ -6,10 +6,11 @@ that cracks and pops, logs that burn down, settle and get replaced. Everything
 is generated locally in WebGL 2 with no accounts, no setup and no assets
 fetched beyond the page and one bundled recording.
 
-The root URL opens study 08, *Wild draft*. Click **Focus mode** (or come back
-after leaving in it) for an edge-to-edge fire with the menus gone; move the
-mouse for the corner gear, press **Esc** to bring them back. Turn on
-**Sound** once and it comes back on the next visit with your first click.
+The root URL opens study 08, *Wild draft*, edge to edge in focus mode with
+the menus gone. The gear in the top-right corner rests faintly, brightens
+when you move, and brings the menus back; so does **Esc**. Leave focus mode
+and the page remembers that; **Focus mode** in the header returns to it. Turn
+on **Sound** once and it comes back on the next visit with your first click.
 
 ## Run
 
@@ -33,13 +34,18 @@ on VPS-01 via the webhook-pull described under [Deploy](#deploy).
 - **Wood pops.** Wet, flaming wood pops most (a fresh log spits for a while
   after it catches). Each pop throws a tight burst of sparks from the actual
   log surface, spikes the firelight and cracks in the audio, all from one
-  event.
+  event. The fire is not evenly restless: a slow, seeded mood gives it spells
+  of quick pops and stretches of twenty seconds to a minute or two with none,
+  and every few minutes a pocket goes off loud, with a shower of embers thrown
+  high into the air.
 - **Wind.** A seeded wind drifts and occasionally gusts: flames lean, shorten
   and tear downwind, the smoke bends, embers are carried, the light flickers
   more deeply and the fire crackles a little faster.
 - **The light breathes.** Firelight flicker is layered noise rather than
-  sines, the main light follows the centre of the flames so the shadows on
-  the stones lean with the fire, and it reddens as flames die to embers.
+  sines, with calm spells and lively ones over tens of seconds and the
+  occasional dip as a flame sheet tears away; the main light follows the
+  centre of the flames so the shadows on the stones lean with the fire, and
+  it reddens as flames die to embers.
 - **Heat haze and vignette.** Hot air above the flames refracts what is
   behind it; a soft vignette deepens in focus mode.
 - **Logs settle.** As wood thins it sinks onto its support continuously.
@@ -50,8 +56,11 @@ on VPS-01 via the webhook-pull described under [Deploy](#deploy).
 Sound: a locally bundled CC0 campfire recording (see
 [public/audio/ATTRIBUTION.md](public/audio/ATTRIBUTION.md)) with overlapping
 passages so it never loops audibly, plus procedural small cracks, the sharp
-crack of a pop and the muffled sluff of settling wood. Sound pauses with the
-fire, in hidden tabs and when the bed is cold.
+crack of a pop, the gunshot and ember sizzle of a loud one, and the muffled
+sluff of settling wood. The crackle follows the fire's mood: in a lull the
+recording's own clicks are muffled and the close cracks stop; in a lively
+spell they bunch into twos and threes. Sound pauses with the fire, in hidden
+tabs and when the bed is cold.
 
 ## Interaction (optional)
 
@@ -62,7 +71,8 @@ canvas. **Look closer** presets frame the logs or the ember bed.
 starts a new seeded fire. **Burn speed** (1× to 1200×) accelerates only the
 fuel and heat clock; flames, smoke, embers, settling and sound keep real
 time. **Equip poking stick** to nudge or push wood: click to nudge, hold to
-push, right-drag to orbit, **Esc** to put it away.
+push, right-drag to orbit, **Esc** to put it away. The stick is a crooked,
+knotted branch with a charred end whose tip glows brighter after a stroke.
 
 The panel under the fire shows the burn clock, core heat, each piece's phase,
 fuel and moisture, and recent events. It is for the curious; the fire needs
@@ -142,7 +152,8 @@ the work log.
 - `src/ground.js`, `src/rocks.js`, `src/coal-bed.js`, `src/coals.js`,
   `src/ash-bed.js` the clearing; `src/textures.js`, `src/texture-loader.js`,
   `src/texture-manifest.js` textures; `src/fire-audio.js` sound;
-  `src/fire-poker.js` the stick; `src/focus-mode.js` focus mode.
+  `src/fire-poker.js` the stick and `src/poker-stick.js` its geometry;
+  `src/focus-mode.js` focus mode.
 
 Tests live in `test/` as `node:test` files and cover the burn model, surface
 combustion, settling (including idle cost and sleeping), rocks, twigs, geometry,

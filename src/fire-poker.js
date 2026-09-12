@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import { applyLogPoke } from './log-settling.js';
+import { createStickGeometry, STICK_LENGTH } from './poker-stick.js';
+import { flicker, smoothNoise } from './weather.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const POKE_INTERVAL = .18;
+// How hard a stroke shoves the wood (0..1 into applyLogPoke's bounded impulse).
+export const POKE_STRENGTH = .9;
 const icon = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 20 13-16 2 2L7 22Zm9-11 4 1M9 15l-3-1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 // Raycast only visible opaque surfaces. The first stone/ground hit blocks wood
@@ -45,10 +49,12 @@ export class FirePoker {
     this.button.addEventListener('click', () => this.setEquipped(!this.equipped));
 
     this.visual = new THREE.Group(); this.visual.name = 'Poking stick';
-    this.shaft = new THREE.Mesh(new THREE.CylinderGeometry(.012, .024, 1, 8, 5),
-      new THREE.MeshStandardMaterial({ color: '#90704a', roughness: 1, emissive: '#35281c', emissiveIntensity: .24 }));
-    this.tip = new THREE.Mesh(new THREE.CylinderGeometry(.009, .012, .13, 7),
-      new THREE.MeshStandardMaterial({ color: '#28241f', roughness: 1 }));
+    // A bent, knotted branch with a charred end that has clearly been in the
+    // fire before; the very tip keeps a dull glow that brightens after a stroke.
+    this.shaft = new THREE.Mesh(createStickGeometry({ seed: 7 }),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .93, emissive: '#332619', emissiveIntensity: .42 }));
+    this.tip = new THREE.Mesh(new THREE.ConeGeometry(.0105, .09, 8),
+      new THREE.MeshStandardMaterial({ color: '#221c17', roughness: .9, emissive: '#ff6a24', emissiveIntensity: .7 }));
     this.marker = new THREE.Mesh(new THREE.TorusGeometry(.058, .006, 5, 28),
       new THREE.MeshBasicMaterial({ color: '#f4d2a0', depthTest: false, depthWrite: false, transparent: true, opacity: .85 }));
     this.marker.renderOrder = 10;
@@ -152,7 +158,7 @@ export class FirePoker {
     // impulse on the clicked surface so an end poke can turn a resting log.
     const direction = this.raycaster.ray.direction.clone();
     direction.y = Math.min(-.12, direction.y * .45); direction.normalize();
-    if (!applyLogPoke(viewer.current.burnVisuals.settling, hit.pose, hit.point, direction, .6)) return false;
+    if (!applyLogPoke(viewer.current.burnVisuals.settling, hit.pose, hit.point, direction, POKE_STRENGTH)) return false;
     this.lastPoke = time; this.strokeTime = time; this.pokeCount++;
     this.announce('Poking the wood');
     this.panel.dataset.pokes = this.pokeCount;
@@ -172,17 +178,22 @@ export class FirePoker {
     const hit = this.aim();
     const target = hit?.point?.clone() ?? this.raycaster.ray.at(Math.max(2, viewer.camera.position.distanceTo(viewer.controls.target)), new THREE.Vector3());
     const direction = this.raycaster.ray.direction.clone();
-    const age = viewer.current.animationTime - this.strokeTime;
+    const time = viewer.current.animationTime, age = time - this.strokeTime;
     const recoil = age >= 0 && age < POKE_INTERVAL ? Math.sin(age / POKE_INTERVAL * Math.PI) * .12 : 0;
     target.addScaledVector(direction, -.045 - recoil);
-    this.raycaster.setFromCamera(new THREE.Vector2(.76, -.94), viewer.camera);
+    // The hand is never perfectly still.
+    this.raycaster.setFromCamera(new THREE.Vector2(.76 + (smoothNoise(time * 1.3, 83) - .5) * .012, -.94 + (smoothNoise(time * 1.1, 89) - .5) * .012), viewer.camera);
     const grip = this.raycaster.ray.at(1.15, new THREE.Vector3());
     const shaftDirection = target.clone().sub(grip), length = shaftDirection.length();
     this.shaft.position.copy(grip).lerp(target, .5);
     this.shaft.quaternion.setFromUnitVectors(UP, shaftDirection.normalize());
-    this.shaft.scale.set(1, Math.max(.1, length - .13), 1);
-    this.tip.position.copy(target).addScaledVector(shaftDirection, -.065);
+    this.shaft.scale.set(1, Math.max(.1, length - .13) / STICK_LENGTH, 1);
+    // The cone's point sits exactly on the target; its base overlaps the shaft's end.
+    this.tip.position.copy(target).addScaledVector(shaftDirection, -.045);
     this.tip.quaternion.copy(this.shaft.quaternion);
+    const firePower = Math.min(1, (viewer.current.cycle?.flame ?? 0) / 3.2);
+    const afterglow = age >= 0 ? Math.exp(-age / 2.5) : 0;
+    this.tip.material.emissiveIntensity = (.35 + firePower * .45 + afterglow * 1.6) * (.8 + .4 * flicker(time * 2, 3));
     this.marker.visible = !!hit?.pose && !viewer.paused;
     if (this.marker.visible) {
       this.marker.position.copy(hit.point).addScaledVector(direction, -.025);

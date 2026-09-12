@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { FirePoker, pickPokeTarget } from '../src/fire-poker.js';
-import { createLogSettling, updateLogSettling } from '../src/log-settling.js';
+import { FirePoker, POKE_STRENGTH, pickPokeTarget } from '../src/fire-poker.js';
+import { applyLogPoke, createLogSettling, updateLogSettling } from '../src/log-settling.js';
+import { createStickGeometry, STICK_LENGTH } from '../src/poker-stick.js';
 
 function box(z = 0) {
   const object = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
@@ -146,4 +147,37 @@ test('paused, unequipped, and off-canvas pokes leave physics and tool state unch
     assert.deepEqual(snapshot(), before, `${guard}: neither physical force nor UI feedback changes`);
     assert.equal(aims, 0, `${guard}: no unnecessary raycast`);
   }
+});
+
+test('the poking stick is a bent, tapered, charred branch whose point still lands on the aim', () => {
+  const geometry = createStickGeometry();
+  const position = geometry.attributes.position, color = geometry.attributes.color, normal = geometry.attributes.normal;
+  assert.ok(position.count > 500, 'a detailed branch rather than an eight-sided cylinder');
+  assert.ok([...position.array, ...color.array, ...normal.array].every(Number.isFinite));
+  for (let i = 0; i < normal.count; i++) assert.ok(Math.abs(Math.hypot(normal.getX(i), normal.getY(i), normal.getZ(i)) - 1) < 1e-3);
+  const box = geometry.boundingBox;
+  assert.ok(Math.abs(box.min.y + STICK_LENGTH / 2) < .01 && Math.abs(box.max.y - STICK_LENGTH / 2) < .01, 'natural length along y, centred');
+  const band = (y0, y1) => { const indices = []; for (let i = 0; i < position.count; i++) { const y = position.getY(i); if (y >= y0 && y <= y1) indices.push(i); } return indices; };
+  const centre = indices => ({ x: indices.reduce((s, i) => s + position.getX(i), 0) / indices.length, z: indices.reduce((s, i) => s + position.getZ(i), 0) / indices.length });
+  const radius = indices => { const c = centre(indices); return indices.reduce((s, i) => s + Math.hypot(position.getX(i) - c.x, position.getZ(i) - c.z), 0) / indices.length; };
+  const luminance = indices => indices.reduce((s, i) => s + color.getX(i) * .3 + color.getY(i) * .59 + color.getZ(i) * .11, 0) / indices.length;
+  const hand = band(-1.5, -1.3), middle = band(-.3, .3), tip = band(1.42, 1.5);
+  assert.ok(radius(hand) > radius(tip) * 2.5, `tapers from ${radius(hand).toFixed(3)} at the hand to ${radius(tip).toFixed(3)} at the point`);
+  assert.ok(Math.hypot(centre(middle).x, centre(middle).z) > .03, 'crooked through the middle');
+  assert.ok(Math.hypot(centre(tip).x, centre(tip).z) < .015, 'the point sits on the aiming axis');
+  assert.ok(luminance(tip) < luminance(middle) * .3, 'the end that lives in the fire is charred black');
+  assert.ok(luminance(hand) > luminance(middle) * 1.2, 'the hand end is worn lighter');
+  assert.deepEqual(createStickGeometry().attributes.position.array, position.array, 'the same seed carves the same stick');
+  assert.notDeepEqual(createStickGeometry({ seed: 9 }).attributes.position.array, position.array);
+});
+
+test('a stroke shoves the wood harder than a gentle nudge', () => {
+  assert.ok(POKE_STRENGTH >= .85 && POKE_STRENGTH <= 1, 'a firm push that still respects the impulse bounds');
+  const stroke = pokerFixture(), nudge = pokerFixture();
+  assert.equal(stroke.poker.poke(), true);
+  const direction = new THREE.Vector3(0, -.12, -1).normalize();
+  assert.equal(applyLogPoke(nudge.viewer.current.burnVisuals.settling, nudge.pose, nudge.pose.position.clone().add(new THREE.Vector3(.5, .1, .2)), direction, .6), true);
+  const ratio = stroke.pose.linearVelocity.length() / nudge.pose.linearVelocity.length();
+  assert.ok(ratio > 1.4 && ratio < 1.6, `the stroke moves the wood ${ratio.toFixed(2)} times as fast as a .6 nudge`);
+  assert.ok(stroke.pose.linearVelocity.length() <= 3 + 1e-8 && stroke.pose.angularVelocity.length() <= 8 + 1e-8);
 });

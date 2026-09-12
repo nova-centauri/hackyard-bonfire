@@ -32,7 +32,10 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
 - `src/hybrid-fire.js`, `src/volume.js` — ray-marched fire and smoke.
 - `src/embers.js`, `src/steam.js`, `src/twig-render.js` — GPU/instanced
   layers replacing per-object draws.
-- `src/weather.js`, `src/pops.js` — wind/gusts and pop scheduling (pure).
+- `src/weather.js`, `src/pops.js` — wind/gusts, pop scheduling and the
+  seeded restlessness envelope (`fireActivity`) that the audio follows (pure).
+- `src/fire-poker.js`, `src/poker-stick.js` — the poking stick: interaction,
+  and its swept branch geometry (pure, tested).
 - `src/fire-audio.js` — bundled recording bed plus procedural cracks, sluffs
   and pops; every sound uses real audio time.
 - `src/textures.js`, `src/texture-manifest.js`, `src/texture-loader.js` —

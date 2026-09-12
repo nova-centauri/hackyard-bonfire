@@ -7,7 +7,7 @@ import { applyLogFracture, createCharFragments } from './log-damage.js';
 import { updateCoalBed } from './coal-bed.js';
 import { updateAshBed } from './ash-bed.js';
 import { createTwigSettling, updateTwigSettling } from './twig-settling.js';
-import { createPopState, updatePops } from './pops.js';
+import { createPopState, fireActivity, updatePops } from './pops.js';
 
 const up = new THREE.Vector3(0, 1, 0), axis = new THREE.Vector3(), center = new THREE.Vector3();
 const endA = new THREE.Vector3(), endB = new THREE.Vector3(), root = new THREE.Vector3();
@@ -43,13 +43,13 @@ export function createBurnVisuals(study) {
   return { flakes, fragments, fragmentTransforms: [], fragmentDepthTransforms: [], particles, impactEmbers, burnMap, embers: [], emberCursor: 0,
     coalMatrices: study.coals.instanceMatrix.array.slice(), cursor: 0, lastShed: Array(7).fill(0), seed: null, rand,
     settling: null, impactEvents: [], impactSerial: 0, resetToken: null, impactPulse: 0,
-    logTransforms: [], logDepthTransforms: [], coalScale: null, twigSettling: createTwigSettling(study.twigs, study.layers), pops: createPopState() };
+    logTransforms: [], logDepthTransforms: [], coalScale: null, twigSettling: createTwigSettling(study.twigs, study.layers), pops: createPopState(), fireActivity: 1 };
 }
 
 // Landings, crumbling shells and pops all pass through here, so a single event
 // drives the ember burst, the light spike and the sound together.
 function emitImpact(view, impact, time, cycle, { count, speed = 1, spread = .28 } = {}) {
-  const event = { id: ++view.impactSerial, time, strength: impact.strength, position: impact.position.clone(), kind: impact.kind || 'impact' };
+  const event = { id: ++view.impactSerial, time, strength: impact.strength, position: impact.position.clone(), kind: impact.kind || 'impact', loud: !!impact.loud };
   view.impactEvents.push(event);
   if (view.impactEvents.length > 16) view.impactEvents.shift();
   // Cold wood still lands, but only a hot bed throws incandescent embers.
@@ -64,7 +64,7 @@ function emitImpact(view, impact, time, cycle, { count, speed = 1, spread = .28 
     view.embers = view.embers.filter(ember => ember.index !== index);
     view.embers.push({ index, start: time, life: 1.3 + view.rand() * 2.1, size: .023 + view.rand() * .042,
       origin: impact.position.clone().add(new THREE.Vector3(Math.cos(angle) * radius, .04 + view.rand() * .08, Math.sin(angle) * radius)),
-      velocity: new THREE.Vector3(Math.cos(angle) * (.3 + view.rand() * 1.25) * speed, (.8 + view.rand() * (1.2 + impact.strength * 2.2)) * speed, Math.sin(angle) * (.3 + view.rand() * 1.25) * speed),
+      velocity: new THREE.Vector3(Math.cos(angle) * (.3 + view.rand() * 1.25) * speed, (.8 + view.rand() * (1.2 + Math.min(1, impact.strength) * 2.2)) * speed, Math.sin(angle) * (.3 + view.rand() * 1.25) * speed),
       heat: .65 + view.rand() * .35 });
   }
 }
@@ -140,9 +140,14 @@ export function updateBurnVisuals(study, force = false) {
   view.settling.profiles = study.logMeshes.map(mesh => mesh.geometry?.userData.profile);
   updateLogSettling(view.settling, cycle, t, groundHeight);
   for (const impact of view.settling.impacts) emitImpact(view, impact, t, cycle);
-  // A pop throws a small, fast, tight burst of sparks off the wood.
+  // A pop throws a small, fast, tight burst of sparks off the wood; a loud
+  // one hurls a shower of them high and wide. The same restlessness envelope
+  // that spaces the pops is published for the audio's own crackle to follow.
+  view.fireActivity = fireActivity(t, cycle.seed);
   for (const pop of updatePops(view.pops, cycle, view.settling.logs, t, view.rand, study.weather?.gust || 0))
-    emitImpact(view, pop, t, cycle, { count: 5 + Math.round(pop.strength * 26), speed: 1.7, spread: .06 });
+    emitImpact(view, pop, t, cycle, pop.loud
+      ? { count: 70 + Math.round(pop.strength * 55), speed: 1.5, spread: .14 }
+      : { count: 5 + Math.round(pop.strength * 26), speed: 1.7, spread: .06 });
   cycle.setLogPoses?.(view.settling.logs);
   for (let i = 0; i < cycle.logs.length; i++) {
     const log = cycle.logs[i], mesh = study.logMeshes[i], def = study.logDefs[i], pose = view.settling.logs[i];
