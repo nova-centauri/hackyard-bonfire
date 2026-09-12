@@ -68,3 +68,39 @@ test('authored textures replace the procedural handle in every material that use
   const configured = configureAuthoredTexture(new THREE.Texture(), 'map', { wrapT: THREE.ClampToEdgeWrapping, anisotropy: 2 });
   assert.equal(configured.wrapT, THREE.ClampToEdgeWrapping); assert.equal(configured.anisotropy, 8);
 });
+
+test('a normal map still applies when the albedo decodes first', async () => {
+  const bark = new THREE.Texture();
+  const material = new THREE.MeshStandardMaterial({ map: bark, bumpMap: bark });
+  const pending = [];
+  const loaded = {};
+  const loader = { load(url, onLoad) { pending.push(() => onLoad(loaded[url] = new THREE.Texture())); } };
+  const promise = loadAuthoredTextures(
+    { bark: { map: 'textures/bark.png', normal: 'textures/bark-normal.png' } },
+    { bark: { map: bark, bump: bark } },
+    () => [material],
+    { base: '/', loader },
+  );
+  assert.equal(pending.length, 2);
+  pending[0]();
+  pending[1]();
+  const report = await promise;
+  assert.deepEqual(report, { bark: { map: 'applied', normal: 'applied' } });
+  assert.strictEqual(material.map, loaded['/textures/bark.png']);
+  assert.strictEqual(material.normalMap, loaded['/textures/bark-normal.png']);
+  assert.equal(material.bumpMap, null);
+});
+
+test('authored maps replace a shader uniform that held the procedural texture', async () => {
+  const puff = new THREE.Texture();
+  const material = new THREE.ShaderMaterial({ uniforms: { uMap: { value: puff } } });
+  const loader = { load(_url, onLoad) { onLoad(new THREE.Texture()); } };
+  const report = await loadAuthoredTextures(
+    { smokePuff: { map: 'textures/smoke-puff.png' } },
+    { smokePuff: { map: puff } },
+    () => [material],
+    { base: '/', loader },
+  );
+  assert.deepEqual(report, { smokePuff: { map: 'applied' } });
+  assert.notEqual(material.uniforms.uMap.value, puff);
+});
