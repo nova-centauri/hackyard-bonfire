@@ -6,7 +6,7 @@ export function formatTime(seconds) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export function mountBurnPanel(viewer) {
+export function mountBurnPanel(viewer, { onAutoFeed } = {}) {
   document.querySelector('.stage').insertAdjacentHTML('afterend', `
     <section class="burn-panel" aria-label="Fire lifecycle" hidden>
       <div class="burn-toolbar">
@@ -23,7 +23,7 @@ export function mountBurnPanel(viewer) {
         <div class="core-guidance"><span id="core-heat-note"></span><span id="core-burn-effect" title="Effect of core heat on fuel consumption. Each piece’s type, moisture, and density also affect how fast it burns."></span></div>
       </div>
       <div class="burn-meta">
-        <label class="feed-switch" title="Add the waiting pieces one at a time, then keep the fire going with a fresh piece whenever it runs low"><input id="auto-feed" type="checkbox" checked> Keep the fire fed</label>
+          <label class="feed-switch" title="When on, waiting pieces are added and the fire is kept going. Uncheck for manual tending: nothing is added unless you feed it, and the fire can go out."><input id="auto-feed" type="checkbox" checked> Keep the fire fed</label>
         <span id="feed-status"></span>
         <span class="burn-cadence">Speed changes the burn clock; flame motion stays natural.</span>
       </div>
@@ -40,7 +40,13 @@ export function mountBurnPanel(viewer) {
   document.querySelector('#randomize-fire').addEventListener('click', () => viewer.resetFire());
   document.querySelector('#add-log').addEventListener('click', () => viewer.addLog(document.querySelector('#fuel-type').value || undefined));
   document.querySelector('#fuel-type').addEventListener('change', () => update(true));
-  document.querySelector('#auto-feed').addEventListener('change', e => { viewer.current?.cycle?.setAutoFeed(e.target.checked); update(true); });
+  document.querySelector('#auto-feed').addEventListener('change', e => {
+    const auto = e.target.checked;
+    viewer.setAutoFeed?.(auto);
+    viewer.current?.cycle?.setAutoFeed(auto);
+    onAutoFeed?.(auto);
+    update(true);
+  });
   function update(force = false) {
     const cycle = viewer.current?.cycle;
     panel.hidden = !cycle; document.body.dataset.lifecycle = String(!!cycle);
@@ -71,9 +77,14 @@ export function mountBurnPanel(viewer) {
     document.querySelector('#add-log').disabled = !cycle.canAdd;
     const selectedFuel = document.querySelector('#fuel-type').value;
     document.querySelector('#add-log').title = cycle.canAdd ? selectedFuel ? `Add ${getFuelType(selectedFuel).label.toLowerCase()} to the fire bed` : 'Add the next waiting piece, or a fresh piece if the queue is empty' : 'All seven positions are occupied; wait for a piece to become ash';
-    document.querySelector('#feed-status').textContent = cycle.queued ? `${cycle.queued} waiting · ${cycle.autoFeed ? `next in ${formatTime(cycle.nextFeed - cycle.time)}` : 'feeding paused'}`
+    const focusAdd = document.querySelector('#add-fuel-focus');
+    if (focusAdd) {
+      focusAdd.disabled = !cycle.canAdd;
+      focusAdd.title = cycle.canAdd ? 'Add a random piece of fuel' : 'The bed is full · wait for a piece to become ash';
+    }
+    document.querySelector('#feed-status').textContent = cycle.queued ? `${cycle.queued} waiting · ${cycle.autoFeed ? `next in ${formatTime(cycle.nextFeed - cycle.time)}` : 'held until you add fuel'}`
       : cycle.phase === 'Cold fire bed' ? 'Fire is out · randomize to start again'
-      : cycle.tending ? 'Tending · a fresh piece whenever the fire runs low' : 'Feeding paused · letting the fire burn down';
+      : cycle.tending ? 'Tending · a fresh piece whenever the fire runs low' : 'Manual · add fuel yourself or the fire will burn down';
     document.querySelector('#burn-seed').textContent = `START ${cycle.seed.toString(16).toUpperCase().padStart(8, '0')}`;
     let queuedDelay = 0;
     cards.forEach((card, i) => {

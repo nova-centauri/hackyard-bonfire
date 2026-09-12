@@ -1,10 +1,10 @@
-import { FUEL_TYPES, getFuelType } from './fuel-types.js';
+import { FUEL_TYPES, getFuelType, pickRandomFuelKind } from './fuel-types.js';
 import { copyCombustionPose, combustionEnvironment, ensureLogSurface, extinguishLogSurface, nearbyFlameCoupling, updateLogSurface } from './log-combustion.js';
 
 // An art-directed heat / fuel model. Units are simulation seconds and normalized heat.
 // Keep the slow burn independent of the flame shader's motion clock.
 export const BURN_SETTINGS = Object.freeze({ step: .5, woodRate: .00165, charRate: .00072, cooling: .0015 });
-export const SPEEDS = [1, 10, 30, 60, 300, 1200];
+export const SPEEDS = [0.5, 0.75, 1, 2, 5, 10, 30, 60, 300, 1200];
 // A piece catches once it is dry enough and its bulk heat passes this level.
 export const IGNITION = Object.freeze({ temperature: .39, moisture: .055 });
 // Tending: add when less than this much wood can still burn, never onto a
@@ -24,6 +24,7 @@ export class BurnCycle {
     this.resetSerial = (this.resetSerial ?? 0) + 1;
     this.seed = seed >>> 0; this.random = randFor(this.seed); this.fuelRandom = randFor(this.seed ^ 0xF17ECA7E); this.time = 0; this.remainder = 0;
     this.autoFeed = true; this.events = []; this.serial = 0; this.revision = 0; this.phase = null; this.logPoses = [];
+    this.choiceRandom = randFor(this.seed ^ 0xADD1F00D);
     const r = this.random;
     this.coalMass = .32 + r() * .4; this.coalHeat = .57 + r() * .22; this.ashMass = .06 + r() * .12;
     this.fragmentChar = 0; this.fragmentHeat = 0;
@@ -39,13 +40,18 @@ export class BurnCycle {
   }
   randomFuelType() {
     // A separate random stream preserves seeded moisture, placement, and timing.
+    // Auto-feed stays mostly wood; scrap shows up now and then. The focus-mode
+    // button picks uniformly so cardboard and newspaper actually appear.
     const roll = this.fuelRandom();
-    return roll < .48 ? 'log' : roll < .73 ? 'small-log' : roll < .9 ? 'kindling' : roll < .97 ? 'plank' : 'stump';
+    return roll < .42 ? 'log' : roll < .64 ? 'small-log' : roll < .78 ? 'kindling'
+      : roll < .88 ? 'pallet' : roll < .94 ? 'plank' : roll < .97 ? 'cardboard'
+      : roll < .985 ? 'newspaper' : 'stump';
   }
   makeLog(slot, initial = false, fuelType = this.randomFuelType()) {
-    const r = this.random, wood = initial ? .24 + r() * .7 : 1;
-    // Burning logs have already dried; waiting logs span seasoned to wet wood.
-    const moisture = initial ? .008 + r() * .034 : .07 + r() * .28;
+    const r = this.random, type = getFuelType(fuelType), wood = initial ? .24 + r() * .7 : 1;
+    // Burning logs have already dried; waiting wood spans seasoned to wet.
+    // Paper starts drier; each kind carries its own range.
+    const moisture = initial ? .008 + r() * .034 : type.moistureMin + r() * type.moistureSpan;
     return { slot, id: ++this.serial, fuelType, phase: initial ? (wood < .45 ? 'charred' : 'burning') : 'queued',
       wood, char: initial ? Math.min(1 - wood, .07 + (1 - wood) * .16) : 0, ash: initial ? (1 - wood) * .1 : 0,
       moisture, initialMoisture: moisture, temperature: initial ? .72 + r() * .2 : .025,
@@ -98,6 +104,9 @@ export class BurnCycle {
     // A fast-burning piece needs a follow-up sooner to keep the stack alight.
     this.nextFeed = this.time + this.feedInterval / Math.max(1, getFuelType(log.fuelType).burnRate);
     this.updateSummary(); return true;
+  }
+  addRandomFuel(options) {
+    return this.addLog(pickRandomFuelKind(this.choiceRandom), options);
   }
   setAutoFeed(value) {
     this.autoFeed = value;
@@ -162,12 +171,12 @@ export class BurnCycle {
       log.temperature = Math.max(0, log.temperature - dry * .7);
       evaporated += dry * fuel.mass;
       const ignition = log.moisture < IGNITION.moisture && log.temperature > IGNITION.temperature && log.wood > .006;
-      const targetFlame = ignition ? clamp((log.temperature - .35) * 2.2) * Math.min(1, log.wood / .17) : 0;
+      const targetFlame = ignition ? clamp((log.temperature - .35) * 2.2 * fuel.flameScale) * Math.min(1, log.wood / .17) : 0;
       log.flame += (targetFlame - log.flame) * (1 - Math.exp(-dt / 5));
       if (log.flame < .0005) log.flame = 0;
       const moistureBurnRate = clamp(1 - log.moisture * 1.8, .15, 1);
       const consumed = Math.min(log.wood, dt * BURN_SETTINGS.woodRate * fuel.burnRate * log.flame * coreBurnRate * moistureBurnRate / log.density);
-      log.wood -= consumed; log.char += consumed * .26; log.ash += consumed * .035;
+      log.wood -= consumed; log.char += consumed * fuel.charYield; log.ash += consumed * fuel.ashYield;
       const charBurn = log.temperature > .10 ? Math.min(log.char, dt * BURN_SETTINGS.charRate * fuel.burnRate * log.temperature * Math.min(1, log.char / .025)) : 0;
       log.char -= charBurn; log.ash += charBurn * .8; this.ashMass += charBurn * .2 * fuel.mass;
       const shed = Math.min(log.char, dt * .00014 * fuel.burnRate * log.temperature * (1 - log.wood));

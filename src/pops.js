@@ -25,7 +25,7 @@ export function fireActivity(time, seed = 0) {
 export function logPopRate(log) {
   if (!live(log) || log.flame < .04) return 0;
   const type = getFuelType(log.fuelType);
-  return log.flame * (.022 + log.moisture * 1.6 + (1 - log.wood) * .012) * (.6 + .4 * type.heatOutput);
+  return log.flame * (.022 + log.moisture * 1.6 + (1 - log.wood) * .012) * (.6 + .4 * type.heatOutput) * type.popScale;
 }
 
 export function popRate(cycle, gust = 0, activity = 1) {

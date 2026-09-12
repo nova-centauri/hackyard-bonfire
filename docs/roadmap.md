@@ -124,3 +124,9 @@ Done in this pass:
   moved to a v2 key so focus mode is the default for everyone; the gear
   rests at 38 % opacity, stays clickable, and no longer hides when the
   pointer crosses the window edge.
+- 2026-09-12 — Scrap fuel on the existing feed queue: pallet slats, cardboard
+  and newspapers, each with its own size, look, moisture, heat, flame, char
+  and mass. Auto-feed stays mostly wood; a plus beside the focus-mode gear
+  drops a uniform random kind. **Keep the fire fed** is now a remembered
+  preference (manual tending lets the fire go out). Burn speed gains 0.5×,
+  0.75×, 2× and 5× alongside the existing steps.

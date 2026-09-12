@@ -92,6 +92,12 @@ test('cold wood never pops, wet wood pops more, and gusts stir the fire', () => 
   assert.ok(popRate(wet) > popRate(dry) * 3, 'moisture drives the pop rate');
   assert.ok(popRate(dry, 1) > popRate(dry, 0));
   assert.ok(popRate(dry, 0, 2) > popRate(dry, 0, 1), 'a lively spell raises the rate');
+  const paper = new BurnCycle(8108), wood = new BurnCycle(8108);
+  for (const cycle of [paper, wood]) cycle.setAutoFeed(false);
+  for (const log of wood.logs) if (log.phase !== 'queued') { log.fuelType = 'log'; log.moisture = .2; log.flame = 1; }
+  for (const log of paper.logs) if (log.phase !== 'queued') { log.fuelType = 'newspaper'; log.moisture = .02; log.flame = 1; }
+  wood.updateSummary(); paper.updateSummary();
+  assert.ok(popRate(paper) < popRate(wood) * .4, 'newsprint barely pops compared with wet wood');
   const state = createPopState(), rand = random(1);
   const cycle = new BurnCycle(8108); cycle.setAutoFeed(false);
   const settling = createLogSettling(definitions, 42); updateLogSettling(settling, cycle, 0, floor);

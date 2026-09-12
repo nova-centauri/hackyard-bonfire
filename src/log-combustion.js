@@ -152,7 +152,7 @@ export function updateLogSurface(log, dt, fuel, { consumed, dry, charBurn, shed,
     oxidation.push(.06 + patch.temperature * (.35 + patch.exposure));
   }
   remove(patches, 'moisture', dry, thermal, (patch, amount) => { patch.temperature = Math.max(0, patch.temperature - amount * .7); });
-  remove(patches, 'wood', consumed, thermal, (patch, amount) => { patch.burn += amount; patch.char += amount * .26; });
+  remove(patches, 'wood', consumed, thermal, (patch, amount) => { patch.burn += amount; patch.char += amount * (fuel.charYield ?? .26); });
   remove(patches, 'char', charBurn + shed, oxidation);
   updateSurfaceSignals(log);
   surface.cleanBurn = clamp(coreHeat) * (1 - log.visibleFlame / Math.max(.001, log.flame));

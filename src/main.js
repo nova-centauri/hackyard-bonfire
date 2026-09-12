@@ -12,6 +12,7 @@ const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const focusIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const gearIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9.5 3-.6 2.2-1.7 1L5 5.6 2.5 9.9 4.1 11v2l-1.6 1.1L5 18.4l2.2-.6 1.7 1 .6 2.2h5l.6-2.2 1.7-1 2.2.6 2.5-4.3-1.6-1.1v-2l1.6-1.1L19 5.6l-2.2.6-1.7-1-.6-2.2h-5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.4"/></svg>';
+const addFuelIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 const soundIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m11 5-5 4H3v6h3l5 4V5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path class="sound-waves" d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path class="sound-muted" d="m16 9 5 6m0-6-5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 document.querySelector('#app').innerHTML=`
  <header class="masthead"><a class="wordmark" href="/" aria-label="Bonfire home">${flameIcon}<span>BONFIRE</span></a><div class="header-label">Studies in fire<span class="slash"> / </span><span class="quiet">Refining the atmosphere</span></div><span class="edition" id="edition">VOLUME 02</span><div class="header-controls"><div id="audio-controls" class="audio-controls" role="group" aria-label="Fire audio"></div><button id="focus-mode" class="focus-toggle" aria-pressed="false" title="Hide menus and focus on the fire">${focusIcon}<span>Focus mode</span></button></div></header>
@@ -28,7 +29,7 @@ document.querySelector('#app').innerHTML=`
   <nav class="study-nav" aria-label="Rendering styles"></nav>
  </main>
  <footer><span>FLAME, WOOD & EVERYTHING BETWEEN</span><span>Three.js <span class="footer-dot">·</span> 360° studies</span></footer>
- <button id="restore-menus" class="restore-menus" aria-label="Exit focus mode and show menus" title="Show menus (Esc)" hidden>${gearIcon}</button>`;
+ <div id="focus-controls" class="focus-controls" role="group" aria-label="Focus mode controls" hidden><button id="add-fuel-focus" class="restore-menus" aria-label="Add a random piece of fuel" title="Add a random piece of fuel">${addFuelIcon}</button><button id="restore-menus" class="restore-menus" aria-label="Exit focus mode and show menus" title="Show menus (Esc)">${gearIcon}</button></div>`;
 
 let viewer,current;
 const preferences=loadPreferences();
@@ -121,7 +122,8 @@ try{
  viewer.audio=new FireAudio();
  viewer.audio.setVolume(preferences.volume);
  mountAudioControls();
- const updateBurnPanel=mountBurnPanel(viewer);
+ viewer.setAutoFeed(preferences.autoFeed);
+ const updateBurnPanel=mountBurnPanel(viewer,{onAutoFeed:autoFeed=>savePreferences({autoFeed})});
  viewer.onError=message=>{const loading=document.querySelector('#loading');loading.textContent=message;loading.hidden=false;};
  viewer.onPlaybackChange=updateMotionControl;
  viewer.onRender=()=>{

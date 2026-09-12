@@ -8,9 +8,11 @@ fetched beyond the page and one bundled recording.
 
 The root URL opens study 08, *Wild draft*, edge to edge in focus mode with
 the menus gone. The gear in the top-right corner rests faintly, brightens
-when you move, and brings the menus back; so does **Esc**. Leave focus mode
-and the page remembers that; **Focus mode** in the header returns to it. Turn
-on **Sound** once and it comes back on the next visit with your first click.
+when you move, and brings the menus back; so does **Esc**. A matching plus
+beside it drops a random piece of fuel (log, kindling, pallet slat,
+cardboard, newspaper, and the rest). Leave focus mode and the page remembers
+that; **Focus mode** in the header returns to it. Turn on **Sound** once and
+it comes back on the next visit with your first click.
 
 ## Run
 
@@ -32,7 +34,8 @@ on VPS-01 via the webhook-pull described under [Deploy](#deploy).
   edge of the pit does not count), never onto a roaring fire, never onto a bed
   too cold to light it and never with two pieces already waiting to catch, so
   a modest fire lasts as long as the page is open at any burn speed. Untick
-  it to let the fire burn all the way down to cold ash.
+  it for manual tending: nothing is added unless you feed it, and the fire
+  can burn down to cold ash. That choice is remembered with sound and focus.
 - **Wood pops.** Wet, flaming wood pops most (a fresh log spits for a while
   after it catches). Each pop throws a tight burst of sparks from the actual
   log surface, spikes the firelight and cracks in the audio, all from one
@@ -69,11 +72,13 @@ tabs and when the bed is cold.
 Drag to orbit, scroll to zoom; arrow keys, `+`, `-` and `0` on the focused
 canvas. **Look closer** presets frame the logs or the ember bed.
 
-**Add fuel** places a log, small log, kindling, 2×4 or stump. **Randomize**
-starts a new seeded fire. **Burn speed** (1× to 1200×) accelerates only the
-fuel and heat clock; flames, smoke, embers, settling and sound keep real
-time. **Equip poking stick** to nudge or push wood: click to nudge, hold to
-push, right-drag to orbit, **Esc** to put it away. The stick is a crooked,
+**Add fuel** places a log, small log, kindling, 2×4, stump, pallet slat,
+cardboard or newspaper. In focus mode the plus next to the gear drops a
+random kind. **Randomize** starts a new seeded fire. **Burn speed** (0.5×
+to 1200×, including 0.75×, 2× and 5×) accelerates only the fuel and heat
+clock; flames, smoke, embers, settling and sound keep real time. **Equip
+poking stick** to nudge or push wood: click to nudge, hold to push,
+right-drag to orbit, **Esc** to put it away. The stick is a crooked,
 knotted branch with a charred end whose tip glows brighter after a stroke.
 
 The panel under the fire shows the burn clock, core heat, each piece's phase,
