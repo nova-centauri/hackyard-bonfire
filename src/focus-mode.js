@@ -9,6 +9,8 @@ const GEAR_IDLE_MS = 4000, GEAR_ENTRY_MS = 6000;
 export function mountFocusMode(viewer, { initial = false, onChange } = {}) {
   const button = document.querySelector('#focus-mode');
   const restore = document.querySelector('#restore-menus');
+  const addFuel = document.querySelector('#add-fuel-focus');
+  const controls = document.querySelector('#focus-controls');
   const canvas = viewer.renderer.domElement;
   let active = false, idleTimer, scrollPosition = 0;
 
@@ -35,7 +37,8 @@ export function mountFocusMode(viewer, { initial = false, onChange } = {}) {
     }
     document.body.classList.toggle('focus-mode', active);
     button.setAttribute('aria-pressed', String(active));
-    restore.hidden = !active;
+    if (controls) controls.hidden = !active;
+    else restore.hidden = !active;
     if (active) {
       window.scrollTo(0, 0);
       canvas.focus({ preventScroll: true });
@@ -55,6 +58,7 @@ export function mountFocusMode(viewer, { initial = false, onChange } = {}) {
   // A viewer who left in focus mode comes back to the fire, not the menus.
   if (initial) setFocusMode(true);
   restore.addEventListener('click', () => setFocusMode(false));
+  addFuel?.addEventListener('click', () => viewer.addRandomFuel?.());
   const activity = () => revealGear();
   document.addEventListener('pointermove', activity, { passive: true });
   document.addEventListener('pointerdown', activity, { passive: true });

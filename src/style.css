@@ -29,14 +29,18 @@ body[data-style="ink"] .study-caption{color:#352b24}body[data-style="ink"] .eyeb
 .audio-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .audio-status[data-error]{clip-path:none;width:220px;height:auto;right:0;top:calc(100% + 10px);padding:10px 12px;border:1px solid #ffffff20;border-radius:5px;background:#171914;color:#e2c09d;font-size:11px;z-index:6}
 .focus-toggle{color:#d4bd9d;background:#dba36a0a;border-color:#dba36a38}
-/* The gear rests faintly but is always there and always clickable; activity brings it up fully. */
-.restore-menus{position:fixed;z-index:20;right:max(24px,env(safe-area-inset-right));top:max(22px,env(safe-area-inset-top));display:grid;place-items:center;width:48px;height:48px;padding:12px;border:1px solid #f0d6b04d;border-radius:50%;background:#1a1712d6;color:#efe2cb;box-shadow:0 0 0 1px #0007,0 3px 16px #000b;backdrop-filter:blur(12px);opacity:.38;transition:opacity .35s ease,background .2s ease,transform .2s ease}
+/* The gear rests faintly but is always there and always clickable; activity brings it up fully. A matching add-fuel control sits beside it. */
+.focus-controls{position:fixed;z-index:20;right:max(24px,env(safe-area-inset-right));top:max(22px,env(safe-area-inset-top));display:flex;align-items:center;gap:10px}
+.restore-menus{display:grid;place-items:center;width:48px;height:48px;padding:12px;border:1px solid #f0d6b04d;border-radius:50%;background:#1a1712d6;color:#efe2cb;box-shadow:0 0 0 1px #0007,0 3px 16px #000b;backdrop-filter:blur(12px);opacity:.38;transition:opacity .35s ease,background .2s ease,transform .2s ease}
 .restore-menus svg{width:23px;height:23px;filter:drop-shadow(0 1px 2px #000c)}
 .focus-mode.focus-pointer-active .restore-menus,.focus-mode .restore-menus:focus-visible,.focus-mode .restore-menus:hover{opacity:1}
 .restore-menus:hover{background:#302b23e6;color:#ffe3bd;transform:scale(1.06)}
+.restore-menus:disabled{opacity:.22;cursor:default;transform:none}
+.focus-mode.focus-pointer-active .restore-menus:disabled{opacity:.4}
+.restore-menus:disabled:hover{background:#1a1712d6;color:#efe2cb;transform:none}
 @media(max-width:1250px){.masthead .quiet,.masthead .slash,.masthead .edition{display:none}.masthead{gap:22px}.header-controls{gap:12px}}
 @media(max-width:850px){.masthead .header-label{display:none}.header-controls .audio-controls{gap:10px}}
-@media(max-width:700px){.masthead{padding:0 17px;gap:10px}.header-controls{gap:10px}.sound-toggle{width:36px;min-height:36px;padding:8px}.sound-toggle>span,.audio-volume>span{display:none}.audio-volume{grid-template-columns:60px 26px;gap:5px}.focus-toggle{font-size:11px;padding:8px;gap:6px;min-height:36px}.focus-toggle svg{width:15px}.restore-menus{right:max(17px,env(safe-area-inset-right));top:max(17px,env(safe-area-inset-top))}}
+@media(max-width:700px){.masthead{padding:0 17px;gap:10px}.header-controls{gap:10px}.sound-toggle{width:36px;min-height:36px;padding:8px}.sound-toggle>span,.audio-volume>span{display:none}.audio-volume{grid-template-columns:60px 26px;gap:5px}.focus-toggle{font-size:11px;padding:8px;gap:6px;min-height:36px}.focus-toggle svg{width:15px}.focus-controls{right:max(17px,env(safe-area-inset-right));top:max(17px,env(safe-area-inset-top));gap:8px}}
 @media(max-width:400px){.masthead{padding:0 12px}.masthead .wordmark{font-size:11px;gap:6px}.header-controls{gap:8px}.header-controls .audio-controls{gap:6px}.audio-volume{grid-template-columns:48px}.audio-volume output{display:none}.focus-toggle{padding:8px 7px}}
 #motion-toggle[hidden],#frozen-label[hidden]{display:none!important}
 @media(max-width:700px){.motion-toggle{margin-top:12px;font-size:11px;padding:7px 10px}}

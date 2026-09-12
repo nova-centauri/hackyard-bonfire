@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createFuelGeometry, createFuelMesh, sampleFuelSurface, PLANK_ASPECT_RATIO } from '../src/fuel-geometry.js';
+import { createFuelGeometry, createFuelMesh, sampleFuelSurface, PLANK_ASPECT_RATIO, boardAspectRatio } from '../src/fuel-geometry.js';
 import { createLogGeometry, createBarkDetails } from '../src/log-geometry.js';
 
 const pieces = [
@@ -10,6 +10,9 @@ const pieces = [
   { fuelType: 'kindling', radius: .065, length: .85 },
   { fuelType: 'plank', radius: .14, length: 2.2 },
   { fuelType: 'stump', radius: .64, length: .82 },
+  { fuelType: 'pallet', radius: .09, length: 1.4 },
+  { fuelType: 'cardboard', radius: .11, length: 1.0 },
+  { fuelType: 'newspaper', radius: .08, length: .75 },
 ];
 
 function assertWatertight(geometry, label) {
@@ -108,6 +111,24 @@ test('stumps have an uneven flared base and bark details follow that same profil
   const expected = sampleFuelSurface(profile, patch.angle, patch.t - patch.height, .0025);
   const actual = new THREE.Vector3().fromBufferAttribute(details.exposed.attributes.position, 4);
   assert.ok(expected.distanceTo(actual) < 1e-6, 'exposed wood follows the flared stump surface');
+});
+
+test('pallet, cardboard and newspaper are thin boards with distinct proportions', () => {
+  const plank = createFuelGeometry({ fuelType: 'plank', radius: .14, length: 2.2, seed: 7 });
+  const pallet = createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 7 });
+  const cardboard = createFuelGeometry({ fuelType: 'cardboard', radius: .11, length: 1.0, seed: 7 });
+  const newspaper = createFuelGeometry({ fuelType: 'newspaper', radius: .08, length: .75, seed: 7 });
+  assert.equal(pallet.userData.profile.shape, 'board');
+  assert.equal(cardboard.userData.profile.shape, 'board');
+  assert.equal(newspaper.userData.profile.shape, 'board');
+  assert.ok(pallet.userData.profile.length < plank.userData.profile.length);
+  assert.ok(cardboard.userData.profile.halfDepth < pallet.userData.profile.halfDepth);
+  assert.ok(newspaper.userData.profile.halfDepth <= cardboard.userData.profile.halfDepth);
+  assert.ok(cardboard.userData.profile.aspect > PLANK_ASPECT_RATIO);
+  assert.equal(boardAspectRatio('plank'), PLANK_ASPECT_RATIO);
+  const same = createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 7 });
+  assert.deepEqual(pallet.attributes.position.array, same.attributes.position.array);
+  assert.deepEqual(pallet.attributes.position.array, createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 8 }).attributes.position.array);
 });
 
 test('kindling uses restrained bark and omitting fuelType preserves the existing log shape', () => {

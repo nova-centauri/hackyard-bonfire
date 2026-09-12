@@ -80,7 +80,7 @@ test('plank ground contact follows its rectangular section as the board turns', 
 });
 
 test('all categories use the rendered dimensions once, including after shrinkage', () => {
-  for (const fuelType of ['log', 'small-log', 'kindling', 'plank', 'stump']) {
+  for (const fuelType of ['log', 'small-log', 'kindling', 'plank', 'stump', 'pallet', 'cardboard', 'newspaper']) {
     const log = { ...fuel(fuelType), scale: .9 }, mesh = buildMesh(sceneDefinition, fuelType);
     const state = createLogSettling([sceneDefinition], 1, [mesh.geometry.userData.profile]);
     settle(state, [log]);
@@ -119,6 +119,19 @@ test('replacing a slot with another category rebuilds its pose even when its id 
     assert.notEqual(newPose.localPoints, oldPose.localPoints, 'collision vertices are rebuilt for the new shape');
   }
   disposeFuelMesh(mesh);
+});
+
+test('pallet, cardboard and newspaper rest on their thin faces without tunneling into the ground', () => {
+  for (const fuelType of ['pallet', 'cardboard', 'newspaper']) {
+    const log = fuel(fuelType), mesh = buildMesh(sceneDefinition, fuelType);
+    const state = createLogSettling([sceneDefinition], 1, [mesh.geometry.userData.profile]);
+    settle(state, [log]);
+    applyPose(mesh, state.logs[0]);
+    const clearance = minimumClearance(mesh);
+    assert.ok(clearance > .005 && clearance < .025, `${fuelType} must sit on the soil: ${clearance}`);
+    assert.equal(state.logs[0].fuelType, fuelType);
+    disposeFuelMesh(mesh);
+  }
 });
 
 test('a new arrival is dropped onto the settled pile, never onto a piece that is still falling', () => {

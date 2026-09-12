@@ -42,7 +42,7 @@ function branch(scene,a,b,r,material,sides=7) {
 export class BonfireViewer {
  constructor(container) {
   this.container=container;this.scenes=new Map();this.cloud=cloudTexture();this.detail='full';
-  this.paused=false;this.speed=1;this.frameCount=0;this.depthDirty=true;this.lastTick=null;this.lastDraw=0;this.needsRender=false;this.lastShadow=0;
+  this.paused=false;this.speed=1;this.autoFeed=true;this.frameCount=0;this.depthDirty=true;this.lastTick=null;this.lastDraw=0;this.needsRender=false;this.lastShadow=0;
   // Level of detail: the governor picks a tier from window size and measured
   // frame pacing; applyQuality() pushes that tier into every render system.
   this.governor=new QualityGovernor({tier:'high',cap:'ultra',now:performance.now()});
@@ -235,6 +235,7 @@ export class BonfireViewer {
   this.loadTextures(this.current);
   this.poker?.sync();
   this.current.burnSpeed=this.speed;
+  this.current.cycle?.setAutoFeed(this.autoFeed);
   this.lastTick=null;this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;
   this.renderer.toneMappingExposure=config.exposure;this.updateBloomState();
   this.finish.uniforms.uMode.value=config.mode;
@@ -263,15 +264,24 @@ export class BonfireViewer {
  setSpeed(speed) {
   if(SPEEDS.includes(speed)){this.speed=speed;if(this.current)this.current.burnSpeed=speed;this.lastTick=null;this.onLifecycleChange?.();}
  }
+ setAutoFeed(value) {
+  this.autoFeed=!!value;
+  this.current?.cycle?.setAutoFeed(this.autoFeed);
+  this.onLifecycleChange?.();
+ }
  resetFire() {
   if(!this.current?.cycle)return;
   this.poker?.reset();
   const seed=crypto.getRandomValues(new Uint32Array(1))[0];
-  this.current.cycle.reset(seed);this.current.animationTime=0;this.lastTick=null;
+  this.current.cycle.reset(seed);this.current.cycle.setAutoFeed(this.autoFeed);this.current.animationTime=0;this.lastTick=null;
   this.refreshBurn();
  }
  addLog(fuelType) {
   if(this.current?.cycle?.addLog(fuelType))this.refreshBurn();
+ }
+ addRandomFuel() {
+  if(this.current?.cycle?.addRandomFuel()){this.refreshBurn();return true;}
+  return false;
  }
  refreshBurn() {
   updateBurnVisuals(this.current,true);updateStudyMotion(this.current);

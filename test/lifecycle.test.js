@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BURN_SETTINGS, BurnCycle } from '../src/lifecycle.js';
-import { FUEL_TYPES, getFuelType } from '../src/fuel-types.js';
+import { BURN_SETTINGS, BurnCycle, SPEEDS } from '../src/lifecycle.js';
+import { FUEL_TYPES, FUEL_KIND_IDS, getFuelType, pickRandomFuelKind } from '../src/fuel-types.js';
 
 const physicalState = cycle => ({ time: cycle.time, coalHeat: cycle.coalHeat, coalMass: cycle.coalMass, ashMass: cycle.ashMass, logs: cycle.logs });
 
@@ -207,7 +207,9 @@ test('a dry fresh log can ignite from retained coals after all visible flame is 
 });
 
 test('cold coals cannot ignite new wood and replenishing a slot retains its ash', () => {
-  const cycle = new BurnCycle(42); cycle.advance(12000);
+  const cycle = new BurnCycle(42);
+  while (cycle.queued) cycle.advance(60);
+  cycle.setAutoFeed(false); cycle.advance(12000);
   assert.equal(cycle.coalHeat, 0); assert.equal(cycle.flame, 0);
   assert.equal(cycle.addLog(), true);
   const added = cycle.logs.find(l => l.phase === 'fresh');
@@ -228,22 +230,33 @@ test('stopping feed holds queued logs and manual addition takes exactly one', ()
 });
 
 test('fuel definitions are immutable, distinct, and safely fall back for unknown types', () => {
-  assert.deepEqual(Object.keys(FUEL_TYPES), ['log', 'small-log', 'kindling', 'plank', 'stump']);
+  assert.deepEqual(Object.keys(FUEL_TYPES), ['log', 'small-log', 'kindling', 'plank', 'stump', 'pallet', 'cardboard', 'newspaper']);
   assert.equal(getFuelType(), FUEL_TYPES.log);
   for (const invalid of ['missing', '__proto__', 'constructor', null]) assert.equal(getFuelType(invalid), FUEL_TYPES.log);
   assert.ok(Object.isFrozen(FUEL_TYPES));
   for (const definition of Object.values(FUEL_TYPES)) {
     assert.ok(Object.isFrozen(definition));
-    for (const key of ['lengthScale', 'radiusScale', 'burnRate', 'heatRate', 'heatOutput', 'mass']) {
+    for (const key of ['lengthScale', 'radiusScale', 'burnRate', 'heatRate', 'heatOutput', 'mass', 'charYield']) {
       assert.ok(Number.isFinite(definition[key]) && definition[key] > 0, key);
     }
   }
   assert.ok(FUEL_TYPES.kindling.radiusScale < FUEL_TYPES['small-log'].radiusScale);
   assert.ok(FUEL_TYPES['small-log'].radiusScale < FUEL_TYPES.log.radiusScale);
   assert.ok(FUEL_TYPES.stump.radiusScale > FUEL_TYPES.log.radiusScale);
+  assert.ok(FUEL_TYPES.newspaper.burnRate > FUEL_TYPES.cardboard.burnRate);
+  assert.ok(FUEL_TYPES.cardboard.burnRate > FUEL_TYPES.pallet.burnRate);
+  assert.ok(FUEL_TYPES.pallet.burnRate > FUEL_TYPES.plank.burnRate);
+  assert.ok(FUEL_TYPES.newspaper.charYield < FUEL_TYPES.cardboard.charYield);
+  assert.ok(FUEL_TYPES.cardboard.charYield < FUEL_TYPES.log.charYield);
 });
 
-test('seeded piles keep solid supports and lighter fuel, with occasional planks and stumps', () => {
+test('burn speeds include slower and faster steps around real time', () => {
+  assert.deepEqual(SPEEDS, [0.5, 0.75, 1, 2, 5, 10, 30, 60, 300, 1200]);
+  for (let i = 1; i < SPEEDS.length; i++) assert.ok(SPEEDS[i] > SPEEDS[i - 1]);
+  assert.ok(SPEEDS.includes(1) && SPEEDS.includes(1200));
+});
+
+test('seeded piles keep solid supports and lighter fuel, with occasional planks, pallets and paper', () => {
   const counts = Object.fromEntries(Object.keys(FUEL_TYPES).map(type => [type, 0]));
   const samples = 512 * 3;
   for (let seed = 1; seed <= 512; seed++) {
@@ -251,9 +264,12 @@ test('seeded piles keep solid supports and lighter fuel, with occasional planks 
     assert.deepEqual(cycle.logs.slice(0, 4).map(log => log.fuelType), ['log', 'log', 'small-log', 'kindling']);
     for (const log of cycle.logs.slice(4)) counts[log.fuelType]++;
   }
-  assert.ok(counts.log / samples > .4);
+  assert.ok(counts.log / samples > .35);
   assert.ok(counts['small-log'] > counts.plank && counts.kindling > counts.plank);
-  assert.ok(counts.plank / samples > .04 && counts.plank / samples < .10);
+  assert.ok(counts.plank / samples > .04 && counts.plank / samples < .12);
+  assert.ok(counts.pallet / samples > .04 && counts.pallet / samples < .14);
+  assert.equal(counts.cardboard, 0);
+  assert.equal(counts.newspaper, 0);
   assert.ok(counts.stump / samples > .01 && counts.stump / samples < .055);
 });
 
@@ -284,7 +300,11 @@ test('category selection preserves the seeded physical random stream and replace
     cycle.setAutoFeed(false);
     for (const log of cycle.logs) { log.phase = 'ash'; log.flame = 0; }
   }
-  for (const fuelType of Object.keys(FUEL_TYPES)) {
+  for (const [index, fuelType] of Object.keys(FUEL_TYPES).entries()) {
+    if (index >= 7) {
+      mixed.logs[index % 7].phase = 'ash'; mixed.logs[index % 7].flame = 0;
+      standard.logs[index % 7].phase = 'ash'; standard.logs[index % 7].flame = 0;
+    }
     assert.equal(mixed.addLog(fuelType), true);
     assert.equal(standard.addLog('log'), true);
     assert.deepEqual(mixed.logs.map(withoutType), standard.logs.map(withoutType));
@@ -298,7 +318,7 @@ test('category selection preserves the seeded physical random stream and replace
 });
 
 test('kindling catches first and stumps catch last on an otherwise identical coal bed', () => {
-  const order = ['kindling', 'small-log', 'plank', 'log', 'stump'];
+  const order = ['newspaper', 'cardboard', 'kindling', 'pallet', 'small-log', 'plank', 'log', 'stump'];
   const samples = order.map(type => isolatedLog(.09, .9, type));
   const ignitionTimes = Array(samples.length);
   for (let second = 1; second <= 600; second++) {
@@ -358,4 +378,72 @@ test('complete seeded cycles shed char, leave ash, and extinguish without negati
     assert.ok(cycle.logs.every(l => l.phase === 'ash' && l.shed > 0));
     assert.ok(cycle.ashMass > .5); assert.ok(cycle.ashDeposits.every(value => value === 1));
   }
+});
+
+test('pickRandomFuelKind is seeded, covers every kind, and is uniform enough to include scrap', () => {
+  const counts = Object.fromEntries(FUEL_KIND_IDS.map(id => [id, 0]));
+  let seed = 42;
+  const rand = () => { seed = Math.imul(seed, 1664525) + 1013904223 | 0; return (seed >>> 0) / 4294967296; };
+  for (let i = 0; i < 8000; i++) counts[pickRandomFuelKind(rand)]++;
+  const expected = 8000 / FUEL_KIND_IDS.length;
+  for (const id of FUEL_KIND_IDS) {
+    assert.ok(counts[id] > expected * .55, `${id} appeared ${counts[id]} times`);
+    assert.ok(counts[id] < expected * 1.45, `${id} appeared ${counts[id]} times`);
+  }
+  assert.equal(pickRandomFuelKind(() => 0), FUEL_KIND_IDS[0]);
+  assert.equal(pickRandomFuelKind(() => .999), FUEL_KIND_IDS[FUEL_KIND_IDS.length - 1]);
+});
+
+test('addRandomFuel places one seeded piece of any kind through the ordinary feed path', () => {
+  const typesOf = seed => {
+    const cycle = new BurnCycle(seed); cycle.setAutoFeed(false);
+    const types = [];
+    while (cycle.queued) {
+      const before = new Set(cycle.logs.filter(log => log.phase === 'fresh').map(log => log.id));
+      assert.equal(cycle.addRandomFuel(), true);
+      types.push(cycle.logs.find(log => log.phase === 'fresh' && !before.has(log.id)).fuelType);
+    }
+    return types;
+  };
+  assert.deepEqual(typesOf(42), typesOf(42));
+  assert.notDeepEqual(typesOf(42), typesOf(43));
+  const kinds = new Set();
+  for (let seed = 1; seed <= 200; seed++) kinds.add(typesOf(seed)[0]);
+  for (const kind of ['pallet', 'cardboard', 'newspaper', 'log']) {
+    assert.ok(kinds.has(kind), `random feed eventually chooses ${kind}`);
+  }
+  const cycle = new BurnCycle(42); cycle.setAutoFeed(false);
+  const waiting = cycle.logs.find(log => log.phase === 'queued');
+  assert.equal(cycle.addRandomFuel(), true);
+  assert.equal(waiting.phase, 'fresh');
+  assert.ok(Object.hasOwn(FUEL_TYPES, waiting.fuelType));
+});
+
+test('manual tending never auto-adds fuel and the fire can go out, while addRandomFuel still feeds it', () => {
+  const cycle = new BurnCycle(7);
+  cycle.setAutoFeed(false);
+  const queued = cycle.queued, serial = cycle.serial;
+  cycle.advance(3600);
+  assert.equal(cycle.queued, queued, 'queued pieces wait');
+  assert.equal(cycle.serial, serial);
+  assert.equal(cycle.needsFuel, false);
+  assert.equal(cycle.addRandomFuel(), true);
+  assert.equal(cycle.queued, queued - 1);
+  assert.equal(cycle.serial, serial);
+  while (cycle.queued) cycle.addRandomFuel();
+  cycle.advance(20000);
+  assert.equal(cycle.phase, 'Cold fire bed');
+  assert.equal(cycle.coalHeat, 0);
+});
+
+test('paper leaves less char than wood for the wood it consumes', () => {
+  const news = isolatedLog(0, .9, 'newspaper'), log = isolatedLog(0, .9, 'log');
+  for (const { cycle, log: piece } of [news, log]) {
+    Object.assign(piece, { temperature: 1, flame: 1, phase: 'burning', everLit: true });
+    cycle.advance(.5);
+  }
+  const newsYield = news.log.char / Math.max(1e-9, 1 - news.log.wood);
+  const logYield = log.log.char / Math.max(1e-9, 1 - log.log.wood);
+  assert.ok(newsYield < logYield * .3, `newspaper char yield ${newsYield.toFixed(3)} vs log ${logYield.toFixed(3)}`);
+  assert.ok(1 - news.log.wood > 1 - log.log.wood);
 });

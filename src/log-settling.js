@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { getFuelType } from './fuel-types.js';
-import { PLANK_ASPECT_RATIO, sampleFuelSurface } from './fuel-geometry.js';
+import { getFuelType, isBoard } from './fuel-types.js';
+import { sampleFuelSurface } from './fuel-geometry.js';
 import { removeCharFromSurface } from './log-combustion.js';
 
 const clamp = THREE.MathUtils.clamp;
@@ -65,17 +65,22 @@ function syncPose(pose) {
   }
 }
 
+function boardAspect(pose) {
+  return pose.profile?.aspect ?? getFuelType(pose.fuelType).aspect ?? 7 / 3;
+}
+
 function makeShape(pose, profile) {
   pose.localPoints = []; pose.profile = profile;
   const rows = pose.fuelType === 'stump' ? 10 : profile ? 8 : 4;
-  const sides = pose.fuelType === 'plank' ? 4 : pose.fuelType === 'stump' ? 36 : 16;
+  const sides = isBoard(pose.fuelType) ? 4 : pose.fuelType === 'stump' ? 36 : 16;
   pose.shapeRows = rows; pose.shapeSides = sides;
   pose.collisionScale = 1;
   for (let row = 0; row <= rows; row++) for (let side = 0; side < sides; side++) {
     let p;
-    if (pose.fuelType === 'plank') {
-      const depth = 1 / Math.hypot(PLANK_ASPECT_RATIO, 1);
-      p = new THREE.Vector3((side < 2 ? -1 : 1) * depth * PLANK_ASPECT_RATIO,
+    if (isBoard(pose.fuelType)) {
+      const aspect = profile?.aspect ?? getFuelType(pose.fuelType).aspect ?? 7 / 3;
+      const depth = 1 / Math.hypot(aspect, 1);
+      p = new THREE.Vector3((side < 2 ? -1 : 1) * depth * aspect,
         row / rows - .5, (side % 2 ? -1 : 1) * depth);
     } else if (profile) {
       p = sampleFuelSurface(profile, side / sides * Math.PI * 2, row / rows);
@@ -199,7 +204,7 @@ function bodyContact(a, b) {
   const axes = [closest.a.clone().sub(closest.b), a.axis, b.axis, a.axis.clone().cross(b.axis),
     a.sectionX, a.sectionZ, b.sectionX, b.sectionZ];
   const basisA = [a.axis, a.sectionX, a.sectionZ], basisB = [b.axis, b.sectionX, b.sectionZ];
-  if (a.fuelType === 'plank' || b.fuelType === 'plank') {
+  if (isBoard(a.fuelType) || isBoard(b.fuelType)) {
     for (const x of basisA) for (const y of basisB) axes.push(x.clone().cross(y));
   }
   let depth = Infinity, normal = null;
@@ -307,7 +312,7 @@ function groundContacts(pose, height) {
   const centreHeight = height(pose.x, pose.z);
   if (pose.y - pose.boundRadius > centreHeight + GROUND_SLOPE_BOUND * pose.boundRadius + SKIN) return candidates;
   // Lumber rests on its edges and corners; an upended piece stands on its cap.
-  if (pose.fuelType === 'plank' || Math.abs(pose.axis.y) > .9) {
+  if (isBoard(pose.fuelType) || Math.abs(pose.axis.y) > .9) {
     for (const point of pose.worldPoints) {
       if (aboveGround(pose, point, centreHeight)) continue;
       const penetration = height(point.x, point.z) + SKIN - point.y;
@@ -345,7 +350,7 @@ function stoneContact(pose, stone) {
   // gaps between stones, rather than treating the ring as an invisible wall.
   for (const edge of stone.edges) {
     axes.push(pose.axis.clone().cross(edge));
-    if (pose.fuelType === 'plank') axes.push(pose.sectionX.clone().cross(edge), pose.sectionZ.clone().cross(edge));
+    if (isBoard(pose.fuelType)) axes.push(pose.sectionX.clone().cross(edge), pose.sectionZ.clone().cross(edge));
   }
   const delta = pose.position.clone().sub(stone.position);
   let depth = Infinity, normal = null;
@@ -575,8 +580,12 @@ function placementContacts(pose, existing, height) {
     const cross = closestSegments(pa, pb, oa, ob);
     const distance = cross.a.distanceTo(cross.b);
     const normal = distance > 1e-8 ? cross.a.clone().sub(cross.b).divideScalar(distance) : new THREE.Vector3(-Math.sin(pose.yaw), 0, Math.cos(pose.yaw));
-    const widthOf = body => body.fuelType === 'plank' ? body.radius / Math.hypot(PLANK_ASPECT_RATIO, 1)
-      * (Math.abs(body.sectionX.dot(normal)) * PLANK_ASPECT_RATIO + Math.abs(body.sectionZ.dot(normal))) : body.radius * body.collisionScale;
+    const widthOf = body => {
+      if (!isBoard(body.fuelType)) return body.radius * body.collisionScale;
+      const aspect = boardAspect(body);
+      return body.radius / Math.hypot(aspect, 1)
+        * (Math.abs(body.sectionX.dot(normal)) * aspect + Math.abs(body.sectionZ.dot(normal)));
+    };
     const width = widthOf(pose) + widthOf(other);
     if (distance >= width) continue;
     const vertical = sectionHeight(pose, cross.t, false) + sectionHeight(other, cross.s, true);
