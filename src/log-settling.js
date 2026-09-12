@@ -14,8 +14,8 @@ const randomFor = seed => () => {
   return seed / 4294967296;
 };
 
-export function createLogSettling(definitions, seed = 1, profiles = []) {
-  return { definitions, profiles, random: randomFor(seed), logs: [], fragments: [], nextFragment: 0,
+export function createLogSettling(definitions, seed = 1, profiles = [], rockColliders = []) {
+  return { definitions, profiles, rockColliders, random: randomFor(seed), logs: [], fragments: [], nextFragment: 0,
     lastTime: null, lastBurnTime: null, fragmentAsh: 0, fragmentCoal: 0, accumulator: 0, physicsTime: 0,
     nextCollapse: 8 + (seed % 7), impacts: [] };
 }
@@ -103,6 +103,32 @@ function inverseInertia(pose, vector) {
 
 function wake(pose) { pose.sleeping = false; pose.quietTime = 0; }
 
+// A mouse poke applies a finite impulse at the hit point. Using the lever arm
+// makes an end poke tip/roll the wood, while a center poke mostly translates it.
+export function applyLogPoke(state, slotOrPose, worldPoint, worldDirection, strength = 1) {
+  const pose = typeof slotOrPose === 'number' ? state.logs[slotOrPose] : slotOrPose;
+  if (!pose?.live || ![...state.logs, ...state.fragments].includes(pose)
+    || !Number.isFinite(strength) || strength <= 0
+    || !worldPoint?.toArray().every(Number.isFinite) || !worldDirection?.toArray().every(Number.isFinite)
+    || worldDirection.lengthSq() < 1e-10) return false;
+  strength = clamp(strength, 0, 1);
+  const arm = worldPoint.clone().sub(pose.position).clampLength(0, pose.boundRadius);
+  const magnitude = Math.min(.7 * strength * Math.sqrt(pose.mass), 1.25 * pose.mass);
+  const beforeAngular = pose.angularVelocity.clone();
+  impulse(pose, arm, worldDirection.clone().normalize().multiplyScalar(magnitude));
+  const angularChange = pose.angularVelocity.clone().sub(beforeAngular).clampLength(0, 3.2 * strength);
+  pose.angularVelocity.copy(beforeAngular).add(angularChange).clampLength(0, 8);
+  pose.linearVelocity.clampLength(0, 3);
+  wake(pose);
+  // Sleeping logs resting on this piece must participate in the same contact
+  // solve when their support is pushed away, including higher stacked pieces.
+  const moving = new Set([pose.id]);
+  for (let pass = 0; pass < state.logs.length; pass++) for (const other of state.logs) {
+    if (other.live && other.supportIds.some(id => moving.has(id))) { wake(other); moving.add(other.id); }
+  }
+  return true;
+}
+
 function closestSegments(a, b, c, d) {
   const u = b.clone().sub(a), v = d.clone().sub(c), w = a.clone().sub(c);
   const aa = u.dot(u), bb = u.dot(v), cc = v.dot(v), dd = u.dot(w), ee = v.dot(w);
@@ -188,10 +214,41 @@ function groundContacts(pose, height) {
   });
 }
 
-function allContacts(bodies, height) {
+function stoneContact(pose, stone) {
+  if (pose.position.distanceToSquared(stone.position) > (pose.boundRadius + stone.boundRadius + SKIN) ** 2) return null;
+  const along = clamp(stone.position.clone().sub(pose.a).dot(pose.axis), 0, pose.length);
+  const closest = pose.a.clone().addScaledVector(pose.axis, along);
+  const axes = [...stone.axes, pose.axis, pose.sectionX, pose.sectionZ, closest.clone().sub(stone.position)];
+  // Face normals plus edge cross products catch finite log ends and the narrow
+  // gaps between stones, rather than treating the ring as an invisible wall.
+  for (const edge of stone.edges) {
+    axes.push(pose.axis.clone().cross(edge));
+    if (pose.fuelType === 'plank') axes.push(pose.sectionX.clone().cross(edge), pose.sectionZ.clone().cross(edge));
+  }
+  const delta = pose.position.clone().sub(stone.position);
+  let depth = Infinity, normal = null;
+  for (const candidate of axes) {
+    if (candidate.lengthSq() < 1e-10) continue;
+    const n = candidate.clone().normalize();
+    if (delta.dot(n) < 0) n.negate();
+    const a = interval(pose, n), b = interval(stone, n), overlap = b.max - a.min;
+    if (overlap < -SKIN || a.max - b.min < -SKIN) return null;
+    if (overlap < depth) { depth = overlap; normal = n; }
+  }
+  if (!normal) return null;
+  const a = interval(pose, normal), b = interval(stone, normal);
+  const point = closest.addScaledVector(normal, (a.min + b.max) * .5 - closest.dot(normal));
+  return { a: pose, b: null, stone, normal, depth, points: [point] };
+}
+
+function allContacts(bodies, height, stones = []) {
   const contacts = [];
   for (let i = 0; i < bodies.length; i++) {
     contacts.push(...groundContacts(bodies[i], height));
+    for (const stone of stones) {
+      const contact = stoneContact(bodies[i], stone);
+      if (contact) contacts.push(contact);
+    }
     for (let j = 0; j < i; j++) {
       if (bodies[i].fragment && bodies[j].fragment) continue;
       const contact = bodyContact(bodies[i], bodies[j]);
@@ -260,11 +317,11 @@ function solveVelocity(contacts) {
   }
 }
 
-function correctPositions(bodies, groundHeight) {
+function correctPositions(bodies, groundHeight, stones) {
   // Split positional correction changes neither linear nor angular velocity.
   // Removing overlap therefore cannot kick energy into a resting stack.
   for (let pass = 0; pass < 6; pass++) {
-    const contacts = allContacts(bodies, groundHeight);
+    const contacts = allContacts(bodies, groundHeight, stones);
     for (const { a, b, normal, depth } of contacts) {
       if (depth <= CONTACT_SLOP) continue;
       if (a.sleeping && (!b || b.sleeping)) continue;
@@ -510,7 +567,8 @@ export function updateLogSettling(state, cycle, time, groundHeight = () => 0) {
   state.accumulator -= steps * STEP;
   if (elapsed === 0 && arrivals.length) {
     const bodies = state.logs.filter(p => p.live);
-    const contacts = allContacts(bodies, groundHeight); setSupports(bodies, contacts, 0);
+    correctPositions(bodies, groundHeight, state.rockColliders);
+    const contacts = allContacts(bodies, groundHeight, state.rockColliders); setSupports(bodies, contacts, 0);
     // A deliberately prepared, balanced stack need not jitter for half a second
     // on page load. An off-center support or a slope still starts moving.
     for (const pose of arrivals) if (pose.initial && pose.contactCount && balancedAtRest(pose, contacts)) pose.sleeping = true;
@@ -536,9 +594,9 @@ export function updateLogSettling(state, cycle, time, groundHeight = () => 0) {
         if (angularSpeed > 1e-8) pose.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(pose.angularVelocity.clone().divideScalar(angularSpeed), angularSpeed * dt)).normalize();
         pose.maxFall = Math.max(pose.maxFall, pose.fallFrom - pose.y); syncPose(pose);
       }
-      const contacts = allContacts(bodies, groundHeight);
-      prepareContacts(contacts, time, state); solveVelocity(contacts); correctPositions(bodies, groundHeight);
-      setSupports(bodies, allContacts(bodies, groundHeight), dt);
+      const contacts = allContacts(bodies, groundHeight, state.rockColliders);
+      prepareContacts(contacts, time, state); solveVelocity(contacts); correctPositions(bodies, groundHeight, state.rockColliders);
+      setSupports(bodies, allContacts(bodies, groundHeight, state.rockColliders), dt);
     }
   }
   // New fractures happen during the physics step, after thermal aging.

@@ -6,6 +6,7 @@ import { sampleLogSurface as sampleBurnSurface } from './log-combustion.js';
 import { applyLogFracture, createCharFragments } from './log-damage.js';
 import { updateCoalBed } from './coal-bed.js';
 import { updateAshBed } from './ash-bed.js';
+import { createTwigSettling, updateTwigSettling } from './twig-settling.js';
 
 const up = new THREE.Vector3(0, 1, 0), axis = new THREE.Vector3(), center = new THREE.Vector3();
 const endA = new THREE.Vector3(), endB = new THREE.Vector3(), root = new THREE.Vector3();
@@ -41,7 +42,7 @@ export function createBurnVisuals(study) {
   return { flakes, fragments, fragmentTransforms: [], particles, impactEmbers, burnMap, embers: [], emberCursor: 0,
     coalMatrices: study.coals.instanceMatrix.array.slice(), cursor: 0, lastShed: Array(7).fill(0), seed: null, rand,
     settling: null, impactEvents: [], impactSerial: 0, resetToken: null, impactPulse: 0,
-    logTransforms: [], coalScale: null };
+    logTransforms: [], coalScale: null, twigSettling: createTwigSettling(study.twigs, study.layers) };
 }
 
 function emitImpact(view, impact, time, cycle) {
@@ -99,7 +100,7 @@ export function updateBurnVisuals(study, force = false) {
   if (view.resetToken !== resetToken) {
     view.resetToken = resetToken; view.seed = cycle.seed; view.particles.length = 0; view.embers.length = 0;
     view.impactEvents.length = 0; view.impactPulse = 0; view.lastShed = cycle.logs.map(log => log.shed);
-    view.settling = createLogSettling(study.logDefs, cycle.seed);
+    view.settling = createLogSettling(study.logDefs, cycle.seed, study.logMeshes.map(mesh => mesh.geometry?.userData.profile), study.rockColliders || []);
     view.logTransforms.length = 0; view.coalScale = null;
     view.fragmentTransforms.length = 0;
     opaqueChanged = true;
@@ -228,16 +229,7 @@ export function updateBurnVisuals(study, force = false) {
   if (flakesChanged) { view.flakes.instanceMatrix.needsUpdate = true; view.flakes.instanceColor.needsUpdate = true; opaqueChanged = true; }
   view.flakes.visible = view.particles.length > 0;
   updateImpactEmbers(view, t);
-  const twigScale = Math.max(0, 1 - cycle.time / 600), twigsVisible = twigScale > .015;
-  if (study.twigs.visible !== twigsVisible || (twigsVisible && study.twigs.scale.y !== twigScale)) opaqueChanged = true;
-  study.twigs.scale.y = twigScale; study.twigs.visible = twigsVisible;
-  for (const flame of study.layers.flames.children) if (flame.userData.twigFlame) {
-    flame.position.copy(study.twigs.position); flame.scale.copy(study.twigs.scale);
-  }
-  for (const spark of study.layers.sparks.children) if (spark.userData.twigGlowOrigin) {
-    spark.position.copy(spark.userData.twigGlowOrigin).multiply(study.twigs.scale).add(study.twigs.position);
-    spark.scale.y = 2.2 * twigScale;
-  }
+  if (updateTwigSettling(view.twigSettling, cycle, t, view.settling.logs, groundHeight)) opaqueChanged = true;
   updateCoalBed(study.coals, cycle, force);
   updateAshBed(study.ashBed, cycle, study.coals, t, force);
   return opaqueChanged;

@@ -3,6 +3,7 @@ import { studies } from './styles.js';
 import { BonfireViewer } from './scene.js';
 import { mountBurnPanel } from './burn-panel.js';
 import { FireAudio } from './fire-audio.js';
+import { FirePoker } from './fire-poker.js';
 
 const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2c1 6-6 7-5 12 1-2 3-3 4-5 0 3 5 5 5 8a5 5 0 0 1-10 0c-2-6 4-9 6-15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -88,6 +89,7 @@ function loadStudy(config){
 }
 try{
  viewer=new BonfireViewer(document.querySelector('#canvas-container'));
+ viewer.poker=new FirePoker(viewer);
  viewer.audio=new FireAudio();
  mountAudioControls();
  const updateBurnPanel=mountBurnPanel(viewer);

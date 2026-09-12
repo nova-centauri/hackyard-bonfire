@@ -57,22 +57,27 @@ export function addDirtClearing(parent, seed) {
   for (let y = 0; y < 512; y++) for (let x = 0; x < 512; x++) {
     const i = (y * 512 + x) * 4;
     const grain = 98 + rand() * 56 + Math.sin(x * .045) * Math.cos(y * .063) * 16;
-    pixels.data[i] = grain; pixels.data[i + 1] = grain * .83; pixels.data[i + 2] = grain * .61; pixels.data[i + 3] = 255;
+    // Keep the grain neutral; the vertex palette supplies soil color outside
+    // the ring without tinting the ash-gray fire hollow brown.
+    pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = grain; pixels.data[i + 3] = 255;
   }
   ctx.putImageData(pixels, 0, 0);
   for (let i = 0; i < 2400; i++) {
-    ctx.fillStyle = rand() > .5 ? '#e1c99e35' : '#241d1655';
+    ctx.fillStyle = rand() > .5 ? '#d7d9db35' : '#20222555';
     ctx.fillRect(rand() * 512, rand() * 512, 1 + rand() * 3, 1 + rand() * 2);
   }
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(8, 8); texture.anisotropy = 8;
   const geometry = new THREE.PlaneGeometry(22, 22, 110, 110); geometry.rotateX(-Math.PI / 2);
   const p = geometry.attributes.position, colors = [];
-  const dark = new THREE.Color('#35312a'), earth = new THREE.Color('#91816c'), outside = new THREE.Color('#4a473c');
+  const dark = new THREE.Color('#55585b'), ashRim = new THREE.Color('#777a7d');
+  const earth = new THREE.Color('#827462'), outside = new THREE.Color('#4a473c');
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i), d = Math.hypot(x, z);
     p.setY(i, groundHeight(x, z));
-    const color = dark.clone().lerp(earth, THREE.MathUtils.smoothstep(d, 1.15, 2.75));
+    const color = dark.clone().lerp(ashRim, THREE.MathUtils.smoothstep(d, .65, 2.15));
+    // The gray extends beneath every stone; earth only returns beyond the ring.
+    color.lerp(earth, THREE.MathUtils.smoothstep(d, 2.45, 3.4));
     color.lerp(outside, THREE.MathUtils.smoothstep(d + Math.sin(x + z) * .5, 4.3, 8));
     color.multiplyScalar(.97 + rand() * .06); colors.push(color.r, color.g, color.b);
   }

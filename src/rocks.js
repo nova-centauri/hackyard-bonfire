@@ -1,9 +1,44 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { ConvexHull } from 'three/addons/math/ConvexHull.js';
 import { random } from './textures.js';
 import { groundHeight } from './ground.js';
 
 const MINERALS = ['#92918b', '#787d80', '#a79581', '#827467', '#706a62', '#aaa397', '#777b70', '#8f8173'];
+
+// Keep a small convex envelope of the actual world-space stone vertices. The
+// directional extremes retain its uneven shape without putting thousands of
+// render triangles through the solver. These colliders never become bodies.
+export function createStoneCollider(geometry, id = 'stone', quaternion = new THREE.Quaternion()) {
+  const attribute = geometry.attributes.position, points = [], selected = new Set();
+  for (let x = -1; x <= 1; x++) for (let y = -1; y <= 1; y++) for (let z = -1; z <= 1; z++) {
+    if (!x && !y && !z) continue;
+    const direction = new THREE.Vector3(x, y, z).normalize().applyQuaternion(quaternion);
+    let best = -Infinity, index = 0;
+    for (let i = 0; i < attribute.count; i++) {
+      const projection = attribute.getX(i) * direction.x + attribute.getY(i) * direction.y + attribute.getZ(i) * direction.z;
+      if (projection > best) { best = projection; index = i; }
+    }
+    if (!selected.has(index)) { selected.add(index); points.push(new THREE.Vector3().fromBufferAttribute(attribute, index)); }
+  }
+  const hull = new ConvexHull().setFromPoints(points), axes = [], edges = [];
+  const addDirection = (list, direction) => {
+    if (direction.lengthSq() < 1e-10) return;
+    direction.normalize();
+    if (!list.some(axis => Math.abs(axis.dot(direction)) > .9999)) list.push(direction);
+  };
+  for (const face of hull.faces) {
+    addDirection(axes, face.normal.clone());
+    let edge = face.edge;
+    do {
+      addDirection(edges, edge.head().point.clone().sub(edge.tail().point));
+      edge = edge.next;
+    } while (edge !== face.edge);
+  }
+  const bounds = new THREE.Box3().setFromPoints(points), position = bounds.getCenter(new THREE.Vector3());
+  return { id, fixed: true, position, worldPoints: points, axes, edges, bounds,
+    boundRadius: Math.sqrt(Math.max(...points.map(point => point.distanceToSquared(position)))) };
+}
 
 function stoneMaterial(detailed, mode) {
   const material = new THREE.MeshStandardMaterial({
@@ -52,7 +87,7 @@ function stoneMaterial(detailed, mode) {
 // Welding vertices before computing normals keeps the worn surfaces smooth.
 export function addStoneRing(parent, { seed = 42, mode = 0, hybrid = false } = {}) {
   const rand = random(seed + 1823), detailed = hybrid || (mode !== 1 && mode !== 2);
-  const count = 23, specs = [], geometries = [], placements = [];
+  const count = 23, specs = [], geometries = [], placements = [], colliders = [];
   for (let i = 0; i < count; i++) {
     const large = i % 7 === 2;
     const width = large ? .34 + rand() * .075 : .215 + rand() * .115;
@@ -89,6 +124,7 @@ export function addStoneRing(parent, { seed = 42, mode = 0, hybrid = false } = {
     geometry.applyMatrix4(matrix); geometry.computeBoundingBox();
     const y = (hybrid ? groundHeight(x, z) : -.055) - geometry.boundingBox.min.y - .035;
     geometry.translate(x, y, z); geometries.push(geometry);
+    colliders.push(createStoneCollider(geometry, `stone-${i}`, new THREE.Quaternion().setFromEuler(rotation)));
     placements.push({ x, y, z, width: spec.width, height: spec.height, depth: spec.depth });
   }
   const merged = mergeGeometries(geometries);
@@ -97,6 +133,7 @@ export function addStoneRing(parent, { seed = 42, mode = 0, hybrid = false } = {
   const stones = new THREE.Mesh(merged, stoneMaterial(detailed, mode));
   stones.name = 'Weathered stone ring'; stones.castShadow = true; stones.receiveShadow = true;
   stones.userData.placements = placements;
+  stones.userData.colliders = colliders;
   parent.add(stones);
   return stones;
 }

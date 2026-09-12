@@ -5,6 +5,7 @@ import { createLogSettling, updateLogSettling } from '../src/log-settling.js';
 import { createBurnVisuals, updateBurnVisuals } from '../src/burn-visuals.js';
 import { BurnCycle } from '../src/lifecycle.js';
 import { createAshBed } from '../src/ash-bed.js';
+import { createTwigSettling } from '../src/twig-settling.js';
 
 const definitions = [
   [[-1, .2, 0], [1, .2, 0], .2],
@@ -121,15 +122,34 @@ test('landing emits hot embers; reset clears events even with the same seed; sou
   assert.equal(study.burnVisuals.impactEvents.length, 0); assert.equal(study.burnVisuals.embers.length, 0); assert.equal(study.burnVisuals.impactPulse, 0);
 });
 
-test('twig flame shells and attached sparks follow their shrinking fuel into the pit', () => {
+test('twig flame shells and attached sparks follow their rigid fuel as it falls into the pit', () => {
   const study = visualStudy(), flame = new THREE.Object3D(), spark = new THREE.Object3D();
   flame.userData.twigFlame = true;
-  spark.userData.twigGlowOrigin = new THREE.Vector3(.3, .7, -.2);
-  study.layers.flames.add(flame); study.layers.sparks.add(spark); study.twigs.position.y = -.16;
-  study.cycle.time = 300; updateBurnVisuals(study, true);
-  assert.equal(flame.scale.y, .5); assert.equal(flame.position.y, -.16);
-  assert.ok(Math.abs(spark.position.y - .19) < 1e-8);
-  assert.equal(spark.position.x, .3); assert.equal(spark.position.z, -.2);
+  const a = new THREE.Vector3(.3, .4, -.2), b = new THREE.Vector3(.3, .9, -.2);
+  const addBranch = (start, end) => {
+    const direction = end.clone().sub(start);
+    const twig = new THREE.Mesh(new THREE.CylinderGeometry(.016, .02, direction.length(), 7), new THREE.MeshStandardMaterial());
+    twig.position.copy(start).lerp(end, .5); twig.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+    study.twigs.add(twig); return twig;
+  };
+  const main = addBranch(a, b); addBranch(a.clone().lerp(b, .58), b.clone().add(new THREE.Vector3(.15, .1, -.1)));
+  // The scene places the two flame-jacket pairs last.
+  addBranch(a.clone().addScalar(1), b.clone().addScalar(1));
+  addBranch(a.clone().addScalar(1).lerp(b.clone().addScalar(1), .58), b.clone().add(new THREE.Vector3(1.15, 1.1, .9)));
+  spark.userData.twigGlowOrigin = a.clone().lerp(b, .6);
+  study.twigs.position.y = -.16; spark.position.copy(spark.userData.twigGlowOrigin).add(study.twigs.position);
+  flame.position.copy(spark.position);
+  study.layers.flames.add(flame); study.layers.sparks.add(spark);
+  study.burnVisuals.twigSettling = createTwigSettling(study.twigs, study.layers);
+  updateBurnVisuals(study, true);
+  study.cycle.time = 300; study.animationTime = 1; updateBurnVisuals(study);
+  study.animationTime = 2.5; updateBurnVisuals(study);
+  const start = new THREE.Vector3(0, -.25, 0).applyMatrix4(main.matrixWorld), end = new THREE.Vector3(0, .25, 0).applyMatrix4(main.matrixWorld);
+  const attached = start.clone().lerp(end, .6);
+  assert.ok(Math.abs(start.y - end.y) < 1e-6, 'the twig rotates flat into the pit');
+  assert.ok(end.y < floor() + .04, 'the tip lands against the dirt');
+  assert.ok(flame.position.distanceTo(attached) < 1e-6); assert.ok(spark.position.distanceTo(attached) < 1e-6);
+  assert.deepEqual(study.twigs.scale.toArray(), [1, 1, 1]);
 });
 
 test('stable fuel reuses depth and instance buffers while heat and flame uniforms keep updating', () => {

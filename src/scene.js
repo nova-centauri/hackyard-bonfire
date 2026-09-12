@@ -103,9 +103,11 @@ export class BonfireViewer {
   this.depthDirty=true;
  }
  load(config) {
+  this.poker?.reset();
   this.config=config;
   if(!this.scenes.has(config.id))this.scenes.set(config.id,this.buildScene(config));
   this.current=this.scenes.get(config.id);this.renderPass.scene=this.current.scene;
+  this.poker?.sync();
   this.current.burnSpeed=this.speed;
   this.lastTick=null;this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;
   this.renderer.toneMappingExposure=config.exposure;this.bloom.strength=config.bloom;
@@ -131,13 +133,14 @@ export class BonfireViewer {
    this.queueRender();
  }
  setPaused(paused) {
-  this.paused=paused;this.lastTick=null;this.audio?.update(this.current,!!this.config?.animated&&!paused&&!document.hidden);this.onPlaybackChange?.();this.onLifecycleChange?.();this.queueRender();
+  this.paused=paused;this.poker?.sync();this.lastTick=null;this.audio?.update(this.current,!!this.config?.animated&&!paused&&!document.hidden);this.onPlaybackChange?.();this.onLifecycleChange?.();this.queueRender();
  }
  setSpeed(speed) {
   if(SPEEDS.includes(speed)){this.speed=speed;if(this.current)this.current.burnSpeed=speed;this.lastTick=null;this.onLifecycleChange?.();}
  }
  resetFire() {
   if(!this.current?.cycle)return;
+  this.poker?.reset();
   const seed=crypto.getRandomValues(new Uint32Array(1))[0];
   this.current.cycle.reset(seed);this.current.animationTime=0;this.lastTick=null;
   this.refreshBurn();
@@ -183,11 +186,14 @@ export class BonfireViewer {
  render() {
   if(!this.current)return;
   const {scene,volumes,layers}=this.current;
+  if(this.poker?.update())this.depthDirty=true;
   this.renderer.info.reset();
   this.camera.updateMatrixWorld();
   // Rebuild depth when the camera moves or a log burns, settles, or sheds char.
   if(this.depthDirty){
-    const hidden=[layers.flames,layers.smoke,layers.sparks,layers.steam],vis=hidden.map(g=>g.visible);
+    const hidden=[layers.flames,layers.smoke,layers.sparks,layers.steam];
+    if(this.poker)hidden.push(this.poker.marker);
+    const vis=hidden.map(g=>g.visible);
     hidden.forEach(g=>g.visible=false);
     const override=scene.overrideMaterial,shadowUpdate=this.renderer.shadowMap.needsUpdate;
     // Only positions/depth are needed here; skip wood/coal shaders and leave shadows for the color pass.
@@ -269,7 +275,7 @@ export class BonfireViewer {
   const ash=createAshBed(ashSurface);
   opaque.add(coals);
   if(!hybrid)updateAshBed(ash,{seed:config.seed,resetSerial:0,time:0,coalMass:.5,ashMass:.2},coals,0,true);
-  addStoneRing(opaque,{seed:config.seed,mode,hybrid});
+  const stoneRing=addStoneRing(opaque,{seed:config.seed,mode,hybrid});
   const debris=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),new THREE.MeshStandardMaterial({color:mode===2?'#777267':'#777067',roughness:1}),310);
   for(let i=0;i<310;i++){
     const a=rand()*Math.PI*2,r=Math.sqrt(rand())*3.25;
@@ -321,7 +327,7 @@ export class BonfireViewer {
     streak.userData.streak={y,phase:y/5.3,index:k};
   }
   if(hybrid){twigs.position.y=-.16;layers.flames.children.forEach(m=>{if(m.userData.twigFlame)m.position.y=-.16;});}
-  const study={groundHeight:hybrid?groundHeight:()=>0,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0};
+  const study={groundHeight:hybrid?groundHeight:()=>0,rockColliders:stoneRing.userData.colliders,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0};
   if(config.animated)study.motion=createMotionState(layers,sparks,[light,coreLight],coalMat,barkMat);
   if(hybrid){
     study.flameSources=volumes.find(v=>v.material.uniforms.uSources).material.uniforms.uSources.value.map(s=>s.clone());
