@@ -7,6 +7,7 @@ import { applyLogFracture, createCharFragments } from './log-damage.js';
 import { updateCoalBed } from './coal-bed.js';
 import { updateAshBed } from './ash-bed.js';
 import { createTwigSettling, updateTwigSettling } from './twig-settling.js';
+import { createPopState, updatePops } from './pops.js';
 
 const up = new THREE.Vector3(0, 1, 0), axis = new THREE.Vector3(), center = new THREE.Vector3();
 const endA = new THREE.Vector3(), endB = new THREE.Vector3(), root = new THREE.Vector3();
@@ -39,14 +40,16 @@ export function createBurnVisuals(study) {
   const impactEmbers = new THREE.Points(emberGeometry, emberMaterial); impactEmbers.frustumCulled = false;
   impactEmbers.visible = false; flakes.visible = false;
   study.layers.sparks.add(impactEmbers);
-  return { flakes, fragments, fragmentTransforms: [], particles, impactEmbers, burnMap, embers: [], emberCursor: 0,
+  return { flakes, fragments, fragmentTransforms: [], fragmentDepthTransforms: [], particles, impactEmbers, burnMap, embers: [], emberCursor: 0,
     coalMatrices: study.coals.instanceMatrix.array.slice(), cursor: 0, lastShed: Array(7).fill(0), seed: null, rand,
     settling: null, impactEvents: [], impactSerial: 0, resetToken: null, impactPulse: 0,
-    logTransforms: [], coalScale: null, twigSettling: createTwigSettling(study.twigs, study.layers) };
+    logTransforms: [], logDepthTransforms: [], coalScale: null, twigSettling: createTwigSettling(study.twigs, study.layers), pops: createPopState() };
 }
 
-function emitImpact(view, impact, time, cycle) {
-  const event = { id: ++view.impactSerial, time, strength: impact.strength, position: impact.position.clone() };
+// Landings, crumbling shells and pops all pass through here, so a single event
+// drives the ember burst, the light spike and the sound together.
+function emitImpact(view, impact, time, cycle, { count, speed = 1, spread = .28 } = {}) {
+  const event = { id: ++view.impactSerial, time, strength: impact.strength, position: impact.position.clone(), kind: impact.kind || 'impact' };
   view.impactEvents.push(event);
   if (view.impactEvents.length > 16) view.impactEvents.shift();
   // Cold wood still lands, but only a hot bed throws incandescent embers.
@@ -54,14 +57,14 @@ function emitImpact(view, impact, time, cycle) {
   const bedExposure = Math.exp(-(x * x + z * z) / 1.65) * Math.exp(-Math.max(0, y - .3));
   const heat = Math.max(impact.heat ?? 0, cycle.coalHeat * bedExposure);
   if (heat < .12) return;
-  const count = Math.round((22 + impact.strength * 82) * Math.min(1, heat * 1.5));
-  for (let i = 0; i < count; i++) {
-    const angle = view.rand() * Math.PI * 2, spread = view.rand() * .28;
+  const total = count ?? Math.round((22 + impact.strength * 82) * Math.min(1, heat * 1.5));
+  for (let i = 0; i < total; i++) {
+    const angle = view.rand() * Math.PI * 2, radius = view.rand() * spread;
     const index = view.emberCursor++ % 320;
     view.embers = view.embers.filter(ember => ember.index !== index);
     view.embers.push({ index, start: time, life: 1.3 + view.rand() * 2.1, size: .023 + view.rand() * .042,
-      origin: impact.position.clone().add(new THREE.Vector3(Math.cos(angle) * spread, .04 + view.rand() * .08, Math.sin(angle) * spread)),
-      velocity: new THREE.Vector3(Math.cos(angle) * (.3 + view.rand() * 1.25), .8 + view.rand() * (1.2 + impact.strength * 2.2), Math.sin(angle) * (.3 + view.rand() * 1.25)),
+      origin: impact.position.clone().add(new THREE.Vector3(Math.cos(angle) * radius, .04 + view.rand() * .08, Math.sin(angle) * radius)),
+      velocity: new THREE.Vector3(Math.cos(angle) * (.3 + view.rand() * 1.25) * speed, (.8 + view.rand() * (1.2 + impact.strength * 2.2)) * speed, Math.sin(angle) * (.3 + view.rand() * 1.25) * speed),
       heat: .65 + view.rand() * .35 });
   }
 }
@@ -91,6 +94,19 @@ function changedValues(previous, values) {
   return !previous || values.some((value, i) => Math.abs(value - previous[i]) > 1e-6);
 }
 
+// Depth and shadow passes are expensive whole-scene renders. Burning wood
+// shrinks by microns per frame, which the matrices follow exactly, but only a
+// change large enough to move a pixel is worth re-rendering those passes for.
+const DEPTH_POSITION_TOLERANCE = 4e-4, DEPTH_SCALE_TOLERANCE = 2e-3;
+function visiblyMoved(previous, values, positionCount) {
+  if (!previous) return true;
+  for (let i = 0; i < values.length; i++) {
+    const tolerance = i < positionCount ? DEPTH_POSITION_TOLERANCE : DEPTH_SCALE_TOLERANCE;
+    if (Math.abs(values[i] - previous[i]) > tolerance) return true;
+  }
+  return false;
+}
+
 export function updateBurnVisuals(study, force = false) {
   const cycle = study.cycle, view = study.burnVisuals, t = study.animationTime;
   if (!cycle || !view) return false;
@@ -101,8 +117,8 @@ export function updateBurnVisuals(study, force = false) {
     view.resetToken = resetToken; view.seed = cycle.seed; view.particles.length = 0; view.embers.length = 0;
     view.impactEvents.length = 0; view.impactPulse = 0; view.lastShed = cycle.logs.map(log => log.shed);
     view.settling = createLogSettling(study.logDefs, cycle.seed, study.logMeshes.map(mesh => mesh.geometry?.userData.profile), study.rockColliders || []);
-    view.logTransforms.length = 0; view.coalScale = null;
-    view.fragmentTransforms.length = 0;
+    view.logTransforms.length = 0; view.logDepthTransforms.length = 0; view.coalScale = null;
+    view.fragmentTransforms.length = 0; view.fragmentDepthTransforms.length = 0;
     opaqueChanged = true;
   }
   const fire = study.volumes.find(volume => volume.material.uniforms.uSources);
@@ -124,6 +140,9 @@ export function updateBurnVisuals(study, force = false) {
   view.settling.profiles = study.logMeshes.map(mesh => mesh.geometry?.userData.profile);
   updateLogSettling(view.settling, cycle, t, groundHeight);
   for (const impact of view.settling.impacts) emitImpact(view, impact, t, cycle);
+  // A pop throws a small, fast, tight burst of sparks off the wood.
+  for (const pop of updatePops(view.pops, cycle, view.settling.logs, t, view.rand, study.weather?.gust || 0))
+    emitImpact(view, pop, t, cycle, { count: 5 + Math.round(pop.strength * 26), speed: 1.7, spread: .06 });
   cycle.setLogPoses?.(view.settling.logs);
   for (let i = 0; i < cycle.logs.length; i++) {
     const log = cycle.logs[i], mesh = study.logMeshes[i], def = study.logDefs[i], pose = view.settling.logs[i];
@@ -142,7 +161,9 @@ export function updateBurnVisuals(study, force = false) {
       if (pose.quaternion) mesh.quaternion.copy(pose.quaternion); else mesh.quaternion.setFromUnitVectors(up, axis);
       mesh.scale.set(radiusScale, pose.length / mesh.userData.length, radiusScale);
       mesh.updateMatrixWorld();
-      if (live) opaqueChanged = true;
+      // Compare against the pose last handed to the depth pass, so slow creep
+      // still accumulates into a refresh instead of drifting unnoticed.
+      if (live && (opaqueChanged || visiblyMoved(view.logDepthTransforms[i], transform, 6))) { view.logDepthTransforms[i] = transform; opaqueChanged = true; }
     }
     const u = mesh.userData.burnUniforms;
     u.uWood.value = log.wood; u.uChar.value = log.char; u.uHeat.value = log.phase === 'queued' ? 0 : log.temperature;
@@ -181,7 +202,7 @@ export function updateBurnVisuals(study, force = false) {
       const rootY = root.y + pose.radius * .45;
       fu.uSources.value[j].set(root.x, rootY, root.z, Math.min(height, 4.45 - rootY)); fu.uFuel.value[j] = strength;
     }
-    for (const sprite of study.motion.steam) if (sprite.userData.steam.log === i) sprite.userData.steam.origin.copy(a);
+    study.steam?.setOrigin(i, a);
     if (log.shed - view.lastShed[i] > .001 && live) {
       view.lastShed[i] = log.shed;
       for (let k = 0; k < 2; k++) {
@@ -194,20 +215,24 @@ export function updateBurnVisuals(study, force = false) {
   const fragments = view.settling.fragments || [];
   if (view.fragments.count !== fragments.length) opaqueChanged = true;
   view.fragments.count = fragments.length;
-  let fragmentsChanged = false;
+  let fragmentsChanged = false, fragmentsVisiblyChanged = false;
   for (let i = 0; i < fragments.length; i++) {
     const fragment = fragments[i], transform = [...fragment.position.toArray(), ...fragment.quaternion.toArray(), fragment.radius, fragment.length];
     if (changedValues(view.fragmentTransforms[i], transform)) {
       view.fragmentTransforms[i] = transform; fragmentsChanged = true;
       obj.position.copy(fragment.position); obj.quaternion.copy(fragment.quaternion); obj.scale.set(fragment.radius, fragment.length, fragment.radius);
       obj.updateMatrix(); view.fragments.setMatrixAt(i, obj.matrix);
+      if (visiblyMoved(view.fragmentDepthTransforms[i], transform, 3)) { view.fragmentDepthTransforms[i] = transform; fragmentsVisiblyChanged = true; }
     }
     view.fragments.geometry.attributes.instanceHeat.setX(i, fragment.heat);
   }
-  if (fragmentsChanged) { view.fragments.instanceMatrix.needsUpdate = true; opaqueChanged = true; }
+  if (fragmentsChanged) view.fragments.instanceMatrix.needsUpdate = true;
+  if (fragmentsVisiblyChanged) opaqueChanged = true;
   if (fragments.length) view.fragments.geometry.attributes.instanceHeat.needsUpdate = true;
   const coalScale = .28 + .72 * Math.sqrt(Math.min(1, cycle.coalMass / .5));
-  const coalsChanged = force || view.coalScale !== coalScale;
+  // The bed shrinks by a fraction of a percent per burn step; rebuild its
+  // matrices only once that adds up to something a pixel can show.
+  const coalsChanged = force || view.coalScale === null || Math.abs(view.coalScale - coalScale) > DEPTH_SCALE_TOLERANCE;
   for (let i = 0; coalsChanged && i < study.coals.count; i++) {
     const offset = i * 16;
     for (let j = 0; j < 16; j++) study.coals.instanceMatrix.array[offset + j] = view.coalMatrices[offset + j] * (j < 12 ? coalScale : 1);
@@ -226,10 +251,12 @@ export function updateBurnVisuals(study, force = false) {
     color.set('#d0b8a0').multiplyScalar(Math.max(.18, 2.4 - age * 1.6)); view.flakes.setColorAt(p.index, color);
   }
   view.particles = view.particles.filter(p => t - p.start < 2.8);
-  if (flakesChanged) { view.flakes.instanceMatrix.needsUpdate = true; view.flakes.instanceColor.needsUpdate = true; opaqueChanged = true; }
+  // Falling char flakes are a few centimetres across and live inside the fire;
+  // they are not worth a depth and shadow re-render on every frame they fall.
+  if (flakesChanged) { view.flakes.instanceMatrix.needsUpdate = true; view.flakes.instanceColor.needsUpdate = true; }
   view.flakes.visible = view.particles.length > 0;
   updateImpactEmbers(view, t);
-  if (updateTwigSettling(view.twigSettling, cycle, t, view.settling.logs, groundHeight)) opaqueChanged = true;
+  if (updateTwigSettling(view.twigSettling, cycle, t, view.settling.logs, groundHeight)) { study.twigInstances?.sync(); opaqueChanged = true; }
   updateCoalBed(study.coals, cycle, force);
   updateAshBed(study.ashBed, cycle, study.coals, t, force);
   return opaqueChanged;

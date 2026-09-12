@@ -244,12 +244,17 @@ test('an offset parallel log rolls outward off the pile instead of following an 
   const defs = [definitions[0], [[-1, .6, .22], [1, .6, .22], .2]];
   const cycle = { logs: [log(0), log(1)] }, state = createLogSettling(defs, 6);
   updateLogSettling(state, cycle, 0, floor);
-  const initialOrientation = state.logs[1].quaternion.clone();
-  simulate(state, cycle, 4);
+  // Accumulate the turn frame by frame: a log that rolls a full revolution
+  // would otherwise look unrotated to a shortest-angle comparison.
+  let previous = state.logs[1].quaternion.clone(), rolled = 0;
+  for (let frame = 1; frame <= 240; frame++) {
+    updateLogSettling(state, cycle, frame / 60, floor);
+    rolled += state.logs[1].quaternion.angleTo(previous); previous = state.logs[1].quaternion.clone();
+  }
   const upper = state.logs[1];
   assert.ok(upper.z > .48, 'its center moves away from the pile center');
   assert.ok(Math.abs(upper.y - .011) < .015, 'it reaches the soil beside the supporting log');
-  assert.ok(upper.quaternion.angleTo(initialOrientation) > 1, 'rolling includes rotation about the wood axis');
+  assert.ok(rolled > 1, 'rolling includes rotation about the wood axis');
   assert.deepEqual(upper.supports, []);
   state.logs.forEach(pose => assertGroundClear(pose));
 });

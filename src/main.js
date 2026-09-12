@@ -5,6 +5,8 @@ import { mountBurnPanel } from './burn-panel.js';
 import { FireAudio } from './fire-audio.js';
 import { FirePoker } from './fire-poker.js';
 import { mountFocusMode } from './focus-mode.js';
+import { isTier } from './quality.js';
+import { loadPreferences, savePreferences } from './preferences.js';
 
 const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2c1 6-6 7-5 12 1-2 3-3 4-5 0 3 5 5 5 8a5 5 0 0 1-10 0c-2-6 4-9 6-15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -29,6 +31,8 @@ document.querySelector('#app').innerHTML=`
  <button id="restore-menus" class="restore-menus" aria-label="Exit focus mode and show menus" title="Show menus (Esc)" hidden>${gearIcon}</button>`;
 
 let viewer,current;
+const preferences=loadPreferences();
+let awaitingSoundGesture=preferences.sound;
 let selectedCollection='refinements';
 const collectionMemory={refinements:'wild-draft',originals:'cinematic'};
 function renderNavigation(collection){
@@ -64,22 +68,35 @@ function updateAudioControl(){
  button.setAttribute('aria-pressed',String(enabled));
  button.setAttribute('aria-label',enabled?'Mute fire sound':'Enable fire sound');
  const status=document.querySelector('#sound-status');
- if(!status.dataset.error)status.textContent=!enabled?'Enable gentle campfire sound':!current?.animated?'Still study · sound paused':viewer?.paused?'Paused with the fire':'Soft crackles & settling wood';
+ if(!status.dataset.error)status.textContent=!enabled?(awaitingSoundGesture?'Click or tap anywhere to resume the campfire sound':'Enable gentle campfire sound'):!current?.animated?'Still study · sound paused':viewer?.paused?'Paused with the fire':'Soft crackles & settling wood';
 }
 function mountAudioControls(){
  const volume=Math.round(viewer.audio.volume*100);
  document.querySelector('#audio-controls').innerHTML=`<button id="sound-toggle" class="sound-toggle" aria-pressed="false" aria-label="Enable fire sound" aria-describedby="sound-status">${soundIcon}<span>Sound off</span></button><label class="audio-volume" for="sound-volume"><span>Volume</span><input id="sound-volume" type="range" min="0" max="100" value="${volume}" aria-label="Fire sound volume" aria-valuetext="${volume}%"><output id="sound-volume-value" aria-hidden="true">${volume}%</output></label><span id="sound-status" class="audio-status" aria-live="polite">Enable gentle campfire sound</span>`;
- document.querySelector('#sound-toggle').addEventListener('click',async()=>{
+ const enableSound=async enabled=>{
   const status=document.querySelector('#sound-status');delete status.dataset.error;
-  try{await viewer.audio.setEnabled(!viewer.audio.enabled);}
+  awaitingSoundGesture=false;
+  try{await viewer.audio.setEnabled(enabled);savePreferences({sound:viewer.audio.enabled});}
   catch(error){console.warn('Fire audio unavailable:',error);status.dataset.error='true';status.textContent='Sound unavailable in this browser';}
   updateAudioControl();
- });
+ };
+ document.querySelector('#sound-toggle').addEventListener('click',()=>enableSound(!viewer.audio.enabled));
  document.querySelector('#sound-volume').addEventListener('input',event=>{
-  viewer.audio.setVolume(Number(event.target.value)/100);
+  viewer.audio.setVolume(Number(event.target.value)/100);savePreferences({volume:viewer.audio.volume});
   document.querySelector('#sound-volume-value').value=`${event.target.value}%`;
   event.target.setAttribute('aria-valuetext',`${event.target.value}%`);
  });
+ // Browsers only start audio from a user gesture. If sound was on last time,
+ // the first click, tap or key anywhere brings it back without a second ask.
+ if(preferences.sound){
+  updateAudioControl();
+  const resume=event=>{
+   if(event.target.closest?.('#audio-controls'))return;
+   document.removeEventListener('pointerdown',resume,true);document.removeEventListener('keydown',resume,true);
+   if(!viewer.audio.enabled)enableSound(true);
+  };
+  document.addEventListener('pointerdown',resume,true);document.addEventListener('keydown',resume,true);
+ }
 }
 function loadStudy(config){
  current=config;
@@ -95,8 +112,14 @@ function loadStudy(config){
 }
 try{
  viewer=new BonfireViewer(document.querySelector('#canvas-container'));
+ // ?quality=low pins a level-of-detail tier for testing; otherwise the
+ // governor chooses from window size and measured frame pacing.
+ const forcedQuality=new URLSearchParams(location.search).get('quality');
+ if(isTier(forcedQuality))viewer.lockQuality(forcedQuality);
+ viewer.onQualityChange=(tier,settings)=>{const stage=document.querySelector('.stage');stage.dataset.qualityTier=tier;stage.dataset.qualityReason=viewer.governor.reason;console.info(`Bonfire quality: ${settings.label} (${viewer.governor.reason})`);};
  viewer.poker=new FirePoker(viewer);
  viewer.audio=new FireAudio();
+ viewer.audio.setVolume(preferences.volume);
  mountAudioControls();
  const updateBurnPanel=mountBurnPanel(viewer);
  viewer.onError=message=>{const loading=document.querySelector('#loading');loading.textContent=message;loading.hidden=false;};
@@ -108,6 +131,7 @@ try{
   stage.dataset.sceneTime=viewer.current.animationTime.toFixed(3);
   stage.dataset.frameCount=viewer.frameCount;
   stage.dataset.renderSize=`${viewer.renderSize.x}x${viewer.renderSize.y}`;
+  stage.dataset.qualityTier=viewer.governor.tier;stage.dataset.fireSteps=viewer.current.volumes.find(v=>v.userData.volumeKind==='fire')?.material.uniforms.uSteps?.value??'';
   stage.dataset.drawCalls=viewer.renderer.info.render.calls;
   stage.dataset.depthPasses=viewer.depthPassCount;
   stage.dataset.shaderErrors=viewer.shaderErrors.length;
@@ -124,7 +148,7 @@ try{
   updateBurnPanel();
  };
  loadStudy(resolveStudy());
- mountFocusMode(viewer);
+ mountFocusMode(viewer,{initial:preferences.focus,onChange:active=>savePreferences({focus:active})});
  window.bonfire={viewer,studies,get current(){return current.id;}};
 }catch(error){
  console.error(error);document.querySelector('#loading').innerHTML='This study needs WebGL 2. Please open it in a browser with hardware acceleration enabled.';

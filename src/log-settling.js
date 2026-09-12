@@ -9,6 +9,26 @@ const active = log => log.phase !== 'queued' && log.phase !== 'ash';
 const UP = new THREE.Vector3(0, 1, 0);
 const GRAVITY = 5.8, STEP = 1 / 120, SKIN = .012, CONTACT_SLOP = .001;
 const MAX_FRAGMENTS = 12;
+// Burning wood shrinks continuously. Waking on every micron kept the whole pile
+// solving forever; a sleeping piece now floats at most this far above its
+// support before gravity is allowed to close the gap.
+const SHRINK_WAKE = .0025, LENGTH_SHRINK_WEIGHT = .15, SHRINK_RESETTLE = .2;
+// Any terrain callback is assumed to rise no faster than this per metre, so a
+// point well above the height sampled at the body centre cannot touch soil.
+const GROUND_SLOPE_BOUND = .4;
+// A sleeping body only wakes when a touching body is really moving or really
+// penetrating it; a still neighbour that merely rests against it is harmless.
+const WAKE_SPEED_SQ = .03 * .03, WAKE_SPIN_SQ = .08 * .08, WAKE_DEPTH = CONTACT_SLOP + .003;
+// A visitor arriving faster than a shrink-settle free fall wakes the sleeper
+// before the solve, so a real collision exchanges its full momentum.
+const WAKE_APPROACH = .25;
+// Rough bark on soft soil resists rolling with a torque of up to the contact
+// force times this lever (metres), solved alongside friction as a bounded
+// angular impulse. Rolling without slipping sees no sliding friction, so
+// without it a round log swings in the bowl like a pendulum for minutes. A big
+// log still rolls downhill because its gravity torque dwarfs the lever; a
+// char crumb a few centimetres across sits in the ash where it lands.
+const ROLLING_RESISTANCE_LENGTH = .006;
 const randomFor = seed => () => {
   seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
   return seed / 4294967296;
@@ -101,7 +121,29 @@ function inverseInertia(pose, vector) {
   return vector.clone().applyQuaternion(pose.quaternion.clone().invert()).multiply(pose.inverseInertia).applyQuaternion(pose.quaternion);
 }
 
-function wake(pose) { pose.sleeping = false; pose.quietTime = 0; }
+function wake(pose) { pose.sleeping = false; pose.quietTime = 0; pose.shrinkSinceWake = 0; pose.shrinkWake = false; }
+
+// Accumulate size changes while asleep and wake only once they add up to a
+// visible gap. A thinner log floats above its support; a shorter one merely
+// pulls its ends in, so length counts for little. A body woken this way only
+// needs to sink that gap, so it may return to sleep quickly.
+function resize(pose, radius, length) {
+  const change = Math.abs(radius - pose.radius) + Math.abs(length - pose.length) * LENGTH_SHRINK_WEIGHT;
+  if (pose.sleeping) {
+    pose.shrinkSinceWake = (pose.shrinkSinceWake || 0) + change;
+    if (pose.shrinkSinceWake > SHRINK_WAKE) { wake(pose); pose.shrinkWake = true; }
+  }
+  pose.length = length; pose.radius = radius;
+}
+
+const moving = pose => pose.linearVelocity.lengthSq() > WAKE_SPEED_SQ || pose.angularVelocity.lengthSq() > WAKE_SPIN_SQ;
+
+// A support that starts moving must take its sleeping load with it, even when
+// it moves away too gently for a contact impulse to register.
+function wakeLoads(bodies) {
+  for (const pose of bodies) if (!pose.sleeping && moving(pose))
+    for (const other of bodies) if (other.sleeping && other.supportIds.includes(pose.id)) wake(other);
+}
 
 // A mouse poke applies a finite impulse at the hit point. Using the lever arm
 // makes an end poke tip/roll the wood, while a center poke mostly translates it.
@@ -115,6 +157,8 @@ export function applyLogPoke(state, slotOrPose, worldPoint, worldDirection, stre
   const arm = worldPoint.clone().sub(pose.position).clampLength(0, pose.boundRadius);
   const magnitude = Math.min(.7 * strength * Math.sqrt(pose.mass), 1.25 * pose.mass);
   const beforeAngular = pose.angularVelocity.clone();
+  // Sleeping bodies ignore impulses, so wake the poked piece before pushing it.
+  wake(pose);
   impulse(pose, arm, worldDirection.clone().normalize().multiplyScalar(magnitude));
   const angularChange = pose.angularVelocity.clone().sub(beforeAngular).clampLength(0, 3.2 * strength);
   pose.angularVelocity.copy(beforeAngular).add(angularChange).clampLength(0, 8);
@@ -186,12 +230,90 @@ function bodyContact(a, b) {
   return { a, b, normal, depth, points };
 }
 
+// Sampled points at the top of the body cannot touch soil; one height sample
+// at the centre plus a slope bound rejects them before any evaluation.
+function aboveGround(pose, point, centreHeight) {
+  return point.y > centreHeight + GROUND_SLOPE_BOUND * Math.hypot(point.x - pose.x, point.z - pose.z) + SKIN;
+}
+
+const ringCentre = new THREE.Vector3(), ringNormal = new THREE.Vector3(), ringDown = new THREE.Vector3(), ringPoint = new THREE.Vector3(), ringSample = new THREE.Vector3();
+// Knots, ovals and stump root lobes can hang lower than the point straight
+// beneath the axis, so each ring scans a fan of angles around it (6° steps
+// over ±48°), ranks them against a planar estimate of the local ground, then
+// refines the best angle parabolically so the contact glides continuously as
+// lumpy wood rolls instead of jumping between discrete samples.
+const RING_FAN_STEP = Math.PI / 30, RING_FAN_HALF = 8;
+
+// Round wood touches the ground along the true lowest line of its cross
+// sections, not at the nearest of sixteen sampled facets. A faceted prism is
+// stable on shallow slopes and its contact arm points straight down, so the
+// support impulse cancelled the friction torque and nothing ever rolled. One
+// exact point per ring from the actual profile keeps stumps, notches and
+// slopes honest and evaluates far fewer terrain samples.
+function ringSurfacePoint(pose, t, angle, target) {
+  const profile = pose.profile, fracture = pose.fracture;
+  let px, py, pz;
+  if (profile) {
+    sampleFuelSurface(profile, angle, t, 0, ringSample);
+    px = ringSample.x / profile.radius; py = ringSample.y / profile.length; pz = ringSample.z / profile.radius;
+  } else { px = Math.cos(angle); py = t - .5; pz = Math.sin(angle); }
+  const notch = fracture ? 1 - fracture.severity * Math.exp(-(((t - fracture.t) / .12) ** 2)) * Math.max(0, Math.cos(angle - fracture.angle)) ** 4 : 1;
+  return target.copy(pose.position).addScaledVector(pose.sectionX, px * pose.radius * notch)
+    .addScaledVector(pose.axis, py * pose.length).addScaledVector(pose.sectionZ, pz * pose.radius * notch);
+}
+
+function roundGroundCandidates(pose, height, centreHeight, candidates) {
+  const e = .01, rows = pose.shapeRows;
+  for (let row = 0; row <= rows; row++) {
+    const t = row / rows;
+    ringCentre.copy(pose.a).addScaledVector(pose.axis, t * pose.length);
+    if (ringCentre.y - pose.collisionRadius > centreHeight + GROUND_SLOPE_BOUND * Math.hypot(ringCentre.x - pose.x, ringCentre.z - pose.z) + SKIN) continue;
+    const h0 = height(ringCentre.x, ringCentre.z);
+    const dx = (height(ringCentre.x + e, ringCentre.z) - height(ringCentre.x - e, ringCentre.z)) / (2 * e);
+    const dz = (height(ringCentre.x, ringCentre.z + e) - height(ringCentre.x, ringCentre.z - e)) / (2 * e);
+    ringNormal.set(-dx, 1, -dz).normalize();
+    // The in-plane direction toward the soil is the ground normal with its
+    // axial component removed and reversed.
+    ringDown.copy(ringNormal).addScaledVector(pose.axis, -ringNormal.dot(pose.axis)).negate();
+    if (ringDown.lengthSq() < 1e-8) continue;
+    ringDown.normalize();
+    const downAngle = Math.atan2(ringDown.dot(pose.sectionZ), ringDown.dot(pose.sectionX));
+    // Planar estimate of how far below the local soil plane a surface point lies.
+    const estimate = angle => { ringSurfacePoint(pose, t, angle, ringPoint); return h0 + dx * (ringPoint.x - ringCentre.x) + dz * (ringPoint.z - ringCentre.z) - ringPoint.y; };
+    let bestAngle = downAngle, bestScore = -Infinity, previous = -Infinity, current = estimate(downAngle);
+    const scores = pose.profile ? [] : null;
+    if (scores) {
+      for (let k = -RING_FAN_HALF; k <= RING_FAN_HALF; k++) {
+        const score = k === 0 ? current : estimate(downAngle + k * RING_FAN_STEP);
+        scores.push(score);
+        if (score > bestScore) { bestScore = score; bestAngle = downAngle + k * RING_FAN_STEP; }
+      }
+      const index = Math.round((bestAngle - downAngle) / RING_FAN_STEP) + RING_FAN_HALF;
+      if (index > 0 && index < scores.length - 1) {
+        previous = scores[index - 1]; const next = scores[index + 1];
+        const denominator = previous - 2 * bestScore + next;
+        if (denominator < -1e-12) bestAngle += .5 * (previous - next) / denominator * RING_FAN_STEP;
+      }
+    }
+    ringSurfacePoint(pose, t, bestAngle, ringPoint);
+    if (aboveGround(pose, ringPoint, centreHeight)) continue;
+    const penetration = height(ringPoint.x, ringPoint.z) + SKIN - ringPoint.y;
+    if (penetration >= -SKIN) candidates.push({ point: ringPoint.clone(), depth: penetration });
+  }
+}
+
 function groundContacts(pose, height) {
   const candidates = [];
-  for (const point of pose.worldPoints) {
-    const penetration = height(point.x, point.z) + SKIN - point.y;
-    if (penetration >= -SKIN) candidates.push({ point, depth: penetration });
-  }
+  const centreHeight = height(pose.x, pose.z);
+  if (pose.y - pose.boundRadius > centreHeight + GROUND_SLOPE_BOUND * pose.boundRadius + SKIN) return candidates;
+  // Lumber rests on its edges and corners; an upended piece stands on its cap.
+  if (pose.fuelType === 'plank' || Math.abs(pose.axis.y) > .9) {
+    for (const point of pose.worldPoints) {
+      if (aboveGround(pose, point, centreHeight)) continue;
+      const penetration = height(point.x, point.z) + SKIN - point.y;
+      if (penetration >= -SKIN) candidates.push({ point, depth: penetration });
+    }
+  } else roundGroundCandidates(pose, height, centreHeight, candidates);
   if (!candidates.length) return [];
   candidates.sort((a, b) => b.depth - a.depth);
   const chosen = [candidates[0]];
@@ -241,17 +363,25 @@ function stoneContact(pose, stone) {
   return { a: pose, b: null, stone, normal, depth, points: [point] };
 }
 
+// Sleeping bodies keep the supports they fell asleep with; only awake bodies,
+// and pairs with at least one awake body, are tested. A settled pile costs
+// nothing here until something wakes it.
 function allContacts(bodies, height, stones = []) {
   const contacts = [];
   for (let i = 0; i < bodies.length; i++) {
-    contacts.push(...groundContacts(bodies[i], height));
-    for (const stone of stones) {
-      const contact = stoneContact(bodies[i], stone);
-      if (contact) contacts.push(contact);
+    const body = bodies[i];
+    if (!body.sleeping) {
+      contacts.push(...groundContacts(body, height));
+      for (const stone of stones) {
+        const contact = stoneContact(body, stone);
+        if (contact) contacts.push(contact);
+      }
     }
     for (let j = 0; j < i; j++) {
-      if (bodies[i].fragment && bodies[j].fragment) continue;
-      const contact = bodyContact(bodies[i], bodies[j]);
+      const other = bodies[j];
+      if (body.fragment && other.fragment) continue;
+      if (body.sleeping && other.sleeping) continue;
+      const contact = bodyContact(body, other);
       if (contact) contacts.push(contact);
     }
   }
@@ -259,23 +389,33 @@ function allContacts(bodies, height, stones = []) {
 }
 
 function pointVelocity(pose, arm) { return pose ? pose.angularVelocity.clone().cross(arm).add(pose.linearVelocity) : new THREE.Vector3(); }
+// A sleeping body is static for the solver. Whether a touch is strong enough to
+// wake it is decided after the solve, from the visitor's remaining motion.
 function effectiveMass(pose, arm, n) {
-  if (!pose) return 0;
+  if (!pose || pose.sleeping) return 0;
   return pose.inverseMass + inverseInertia(pose, arm.clone().cross(n)).cross(arm).dot(n);
 }
 function impulse(pose, arm, impulseVector) {
-  if (!pose) return;
+  if (!pose || pose.sleeping) return;
   pose.linearVelocity.addScaledVector(impulseVector, pose.inverseMass);
   pose.angularVelocity.add(inverseInertia(pose, arm.clone().cross(impulseVector)));
 }
+function angularMass(pose, axis) { return !pose || pose.sleeping ? 0 : inverseInertia(pose, axis).dot(axis); }
+function angularImpulse(pose, vector) { if (pose && !pose.sleeping) pose.angularVelocity.add(inverseInertia(pose, vector)); }
 
-function prepareContacts(contacts, time, state) {
+function prepareContacts(contacts, time, state, dt) {
   for (const contact of contacts) {
-    const { a, b, normal } = contact;
-    if (a.sleeping && b && !b.sleeping || b?.sleeping && !a.sleeping) { wake(a); if (b) wake(b); }
+    const { a, b, normal, depth } = contact;
+    if (a.sleeping && (!b || b.sleeping)) { contact.constraints = []; continue; }
+    // Speculative contact: inside the detection skin a body may still approach
+    // exactly fast enough to reach the surface this substep, so burning wood
+    // sinks continuously as it thins instead of hovering and dropping in hops.
+    const approach = depth < 0 ? depth / dt : 0;
+    const sleeper = a.sleeping ? a : b?.sleeping ? b : null;
     contact.constraints = contact.points.map(point => {
       const ra = point.clone().sub(a.position), rb = b ? point.clone().sub(b.position) : new THREE.Vector3();
       const speed = pointVelocity(a, ra).sub(pointVelocity(b, rb)).dot(normal);
+      if (sleeper && (speed < -WAKE_APPROACH || depth > WAKE_DEPTH)) wake(sleeper);
       // An impact belongs to the arriving/moving body; opposite support impulses
       // should not create duplicate spark/audio events on a quiet bottom log.
       const owner = b && b.inFlight && !a.inFlight ? b : a;
@@ -284,7 +424,7 @@ function prepareContacts(contacts, time, state) {
           position: point.clone(), heat: owner.heat, kind: 'impact' });
         owner.lastImpact = time;
       }
-      return { point, ra, rb, normalImpulse: 0, tangentImpulse: new THREE.Vector3(), bounce: speed < -1 ? -.025 * speed : 0 };
+      return { point, ra, rb, normalImpulse: 0, tangentImpulse: new THREE.Vector3(), rollImpulse: new THREE.Vector3(), bounce: approach < 0 ? approach : speed < -1 ? -.025 * speed : 0 };
     });
   }
 }
@@ -313,6 +453,21 @@ function solveVelocity(contacts) {
       if (c.tangentImpulse.length() > limit) c.tangentImpulse.setLength(limit);
       const frictionDelta = c.tangentImpulse.clone().sub(old);
       impulse(a, c.ra, frictionDelta); if (b) impulse(b, c.rb, frictionDelta.negate());
+      // Rolling resistance: oppose the relative spin about the contact plane
+      // with an angular impulse no larger than the normal impulse times the
+      // resistance lever, accumulated and clamped exactly like friction.
+      const spin = a.angularVelocity.clone(); if (b) spin.sub(b.angularVelocity);
+      spin.addScaledVector(normal, -spin.dot(normal));
+      const spinSpeed = spin.length();
+      if (spinSpeed < 1e-9) continue;
+      const axis = spin.divideScalar(spinSpeed), rollMass = angularMass(a, axis) + angularMass(b, axis);
+      if (rollMass <= 0) continue;
+      const previousRoll = c.rollImpulse.clone();
+      c.rollImpulse.addScaledVector(axis, -spinSpeed / rollMass);
+      const rollLimit = ROLLING_RESISTANCE_LENGTH * c.normalImpulse;
+      if (c.rollImpulse.length() > rollLimit) c.rollImpulse.setLength(rollLimit);
+      const rollDelta = c.rollImpulse.clone().sub(previousRoll);
+      angularImpulse(a, rollDelta); if (b) angularImpulse(b, rollDelta.negate());
     }
   }
 }
@@ -320,35 +475,48 @@ function solveVelocity(contacts) {
 function correctPositions(bodies, groundHeight, stones) {
   // Split positional correction changes neither linear nor angular velocity.
   // Removing overlap therefore cannot kick energy into a resting stack.
+  const touched = new Set();
   for (let pass = 0; pass < 6; pass++) {
     const contacts = allContacts(bodies, groundHeight, stones);
+    touched.clear();
     for (const { a, b, normal, depth } of contacts) {
       if (depth <= CONTACT_SLOP) continue;
       if (a.sleeping && (!b || b.sleeping)) continue;
-      const total = a.inverseMass + (b?.inverseMass || 0), correction = Math.min(.06, (depth - CONTACT_SLOP) * .8);
-      const va = normal.clone().multiplyScalar(correction * a.inverseMass / total);
-      a.x += va.x; a.y += va.y; a.z += va.z; syncPose(a);
-      if (b) { const vb = normal.clone().multiplyScalar(correction * b.inverseMass / total); b.x -= vb.x; b.y -= vb.y; b.z -= vb.z; syncPose(b); }
+      const massA = a.sleeping ? 0 : a.inverseMass, massB = b && !b.sleeping ? b.inverseMass : 0;
+      const total = massA + massB, correction = Math.min(.06, (depth - CONTACT_SLOP) * .8);
+      if (total <= 0) continue;
+      const scaleA = correction * massA / total;
+      if (scaleA) { a.x += normal.x * scaleA; a.y += normal.y * scaleA; a.z += normal.z * scaleA; touched.add(a); }
+      const scaleB = correction * massB / total;
+      if (scaleB) { b.x -= normal.x * scaleB; b.y -= normal.y * scaleB; b.z -= normal.z * scaleB; touched.add(b); }
     }
+    // Depths were sampled at the start of the pass, so one world-space sync per
+    // moved body at the end of the pass gives identical results far cheaper.
+    if (!touched.size) break;
+    for (const body of touched) syncPose(body);
   }
 }
 
 function setSupports(bodies, contacts, dt) {
-  for (const pose of bodies) { pose.supports = []; pose.supportIds = []; pose.contactCount = 0; }
+  // Wake a sleeper only when its visitor is still moving after the solve or is
+  // really pressing into it; a piece that merely came to rest on it is inert.
+  for (const { a, b, depth } of contacts) {
+    const sleeper = a.sleeping && b && !b.sleeping ? a : b?.sleeping && !a.sleeping ? b : null;
+    if (sleeper && (moving(sleeper === a ? b : a) || depth > WAKE_DEPTH)) wake(sleeper);
+  }
+  for (const pose of bodies) if (!pose.sleeping) { pose.supports = []; pose.supportIds = []; pose.contactCount = 0; }
   for (const { a, b, normal } of contacts) {
-    if (normal.y > .25) { a.contactCount++; if (b && !b.fragment) { a.supports.push(b.slot); a.supportIds.push(b.id); } }
-    if (b && normal.y < -.25) { b.contactCount++; if (!a.fragment) { b.supports.push(a.slot); b.supportIds.push(a.id); } }
+    if (normal.y > .25 && !a.sleeping) { a.contactCount++; if (b && !b.fragment) { a.supports.push(b.slot); a.supportIds.push(b.id); } }
+    if (b && normal.y < -.25 && !b.sleeping) { b.contactCount++; if (!a.fragment) { b.supports.push(a.slot); b.supportIds.push(a.id); } }
   }
   for (const pose of bodies) {
+    if (pose.sleeping) continue;
     pose.supports = [...new Set(pose.supports)];
     if (pose.contactCount) {
       pose.inFlight = false; pose.maxFall = 0;
-      // Wood dissipates rolling energy at contacts; air damping never steers it
-      // toward an invented destination. Slopes still accelerate a resting round log.
-      pose.angularVelocity.multiplyScalar(Math.exp(-dt * 1.1));
       if (pose.linearVelocity.lengthSq() < .0004 && pose.angularVelocity.lengthSq() < .0025) pose.quietTime += dt;
       else pose.quietTime = 0;
-      if (pose.quietTime > .55) { pose.sleeping = true; pose.linearVelocity.set(0, 0, 0); pose.angularVelocity.set(0, 0, 0); }
+      if (pose.quietTime > (pose.shrinkWake ? SHRINK_RESETTLE : .55)) { pose.sleeping = true; pose.shrinkWake = false; pose.linearVelocity.set(0, 0, 0); pose.angularVelocity.set(0, 0, 0); }
     } else { if (!pose.inFlight) pose.fallFrom = pose.y; pose.inFlight = true; pose.quietTime = 0; wake(pose); }
     syncPose(pose);
   }
@@ -525,9 +693,7 @@ function ageFragments(state, cycle, elapsed) {
       deposit(fragment.remainingChar, fragment.heat < .07); fragment.remainingChar = 0; fragment.live = false; continue;
     }
     const scale = Math.cbrt(fragment.remainingChar / fragment.initialChar);
-    const radius = fragment.fragmentRadius * scale, length = fragment.fragmentLength * scale;
-    if (Math.abs(radius - fragment.radius) + Math.abs(length - fragment.length) > .00002) wake(fragment);
-    fragment.radius = radius; fragment.length = length;
+    resize(fragment, fragment.fragmentRadius * scale, fragment.fragmentLength * scale);
     updateMass(fragment, fragment.remainingChar * 1.4); syncPose(fragment); retained.push(fragment);
   }
   state.fragments = retained;
@@ -550,8 +716,7 @@ export function updateLogSettling(state, cycle, time, groundHeight = () => 0) {
     pose.live = active(log); pose.heat = log.temperature;
     const mass = massOf(log), length = pose.baseLength * log.scale * (.84 + .16 * Math.sqrt(Math.min(1, mass)));
     const radius = pose.baseRadius * Math.max(.035, Math.sqrt(mass)) * log.scale * pose.compression;
-    if (Math.abs(length - pose.length) + Math.abs(radius - pose.radius) > .00002) wake(pose);
-    pose.length = length; pose.radius = radius;
+    resize(pose, radius, length);
     updateMass(pose, mass * getFuelType(log.fuelType).mass * log.scale ** 3); syncPose(pose);
     if (pose.live && !pose.initialized) arrivals.push(pose);
   }
@@ -584,18 +749,22 @@ export function updateLogSettling(state, cycle, time, groundHeight = () => 0) {
     const substeps = clamp(Math.ceil((sweptSpeed + GRAVITY * STEP) * STEP / (smallest * .65)), 1, 16);
     const dt = STEP / substeps;
     for (let substep = 0; substep < substeps; substep++) {
+      wakeLoads(bodies);
       for (const pose of bodies) {
         if (pose.sleeping && (pose.linearVelocity.lengthSq() > 1e-8 || pose.angularVelocity.lengthSq() > 1e-8)) wake(pose);
         if (pose.sleeping) continue;
         pose.linearVelocity.y -= GRAVITY * dt;
         pose.linearVelocity.multiplyScalar(Math.exp(-dt * .035));
+        // Wood dissipates rolling energy at contacts; air damping never steers
+        // it toward an invented destination. Slopes still accelerate a round log.
+        if (pose.contactCount) pose.angularVelocity.multiplyScalar(Math.exp(-dt * 1.1));
         pose.x += pose.linearVelocity.x * dt; pose.y += pose.linearVelocity.y * dt; pose.z += pose.linearVelocity.z * dt;
         const angularSpeed = pose.angularVelocity.length();
         if (angularSpeed > 1e-8) pose.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(pose.angularVelocity.clone().divideScalar(angularSpeed), angularSpeed * dt)).normalize();
         pose.maxFall = Math.max(pose.maxFall, pose.fallFrom - pose.y); syncPose(pose);
       }
       const contacts = allContacts(bodies, groundHeight, state.rockColliders);
-      prepareContacts(contacts, time, state); solveVelocity(contacts); correctPositions(bodies, groundHeight, state.rockColliders);
+      prepareContacts(contacts, time, state, dt); solveVelocity(contacts); correctPositions(bodies, groundHeight, state.rockColliders);
       setSupports(bodies, allContacts(bodies, groundHeight, state.rockColliders), dt);
     }
   }

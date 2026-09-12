@@ -7,7 +7,7 @@ float noise3(vec3 p) {
  return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
  mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
 }
-float fbm(vec3 p) { return noise3(p)*.57+noise3(p*2.03+9.2)*.28+noise3(p*4.09-3.8)*.15; }
+float fbm(vec3 p) { float v=noise3(p)*.57+noise3(p*2.03+9.2)*.28; return uOctaves>2?v+noise3(p*4.09-3.8)*.15:v/.85; }
 vec2 boxHit(vec3 ro,vec3 rd,vec3 lo,vec3 hi) { vec3 a=(lo-ro)/rd,b=(hi-ro)/rd;vec3 c=min(a,b),d=max(a,b);return vec2(max(max(c.x,c.y),c.z),min(min(d.x,d.y),d.z)); }
 `;
 
@@ -20,7 +20,7 @@ export function createVolume(kind, config, depthTexture) {
  const geometry=new THREE.BoxGeometry(size.x,size.y,size.z);geometry.translate(...bounds[0].clone().add(bounds[1]).multiplyScalar(.5).toArray());
  const material=new THREE.ShaderMaterial({
    transparent:true,depthWrite:false,depthTest:false,side:THREE.BackSide,
-   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0},uSmokeAmount:{value:1}},
+   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0},uSmokeAmount:{value:1},uSteps:{value:steps},uOctaves:{value:3},uWind:{value:new THREE.Vector2()}},
    vertexShader:`varying vec3 vPosition;void main(){vPosition=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
    fragmentShader:`precision highp float;
      varying vec3 vPosition;
@@ -29,7 +29,8 @@ export function createVolume(kind, config, depthTexture) {
      uniform mat4 uInvProjection,uCameraWorld;
      uniform vec3 uLo,uHi,uSmokeColor;
      uniform float uSeed,uScale,uTime,uSmokeAmount;
-     uniform int uMode;
+     uniform int uMode,uSteps,uOctaves;
+     uniform vec2 uWind;
      ${noise}
      float flame(vec3 p) {
        p.y/=uScale;
@@ -64,9 +65,9 @@ export function createVolume(kind, config, depthTexture) {
        end=min(end,dot(opaque-ro,rd));
        if(end<=start) discard;
        vec4 sum=vec4(0.);
-       float stepSize=(end-start)/${steps}.;
+       float stepSize=(end-start)/float(uSteps);
        float jitter=hash(vec3(gl_FragCoord.xy,uSeed));
-       for(int i=0;i<${steps};i++) {
+       for(int i=0;i<uSteps;i++) {
          vec3 p=ro+rd*(start+(float(i)+jitter)*stepSize);
          ${smoke?`
          float h=(p.y-.8)/5.8;
@@ -75,7 +76,7 @@ export function createVolume(kind, config, depthTexture) {
          // pair of fixed sine waves made the column sweep from side to side.
          float advectedHeight=h*2.7-uTime*.16;
          vec2 draft=vec2(noise3(vec3(advectedHeight,uSeed,3.1)),noise3(vec3(advectedHeight,uSeed,-7.4)))-.5;
-         vec2 center=vec2(.12+.48*h,.04*h)+draft*(.22+h*.80);
+         vec2 center=vec2(.12+.48*h,.04*h)+draft*(.22+h*.80)+uWind*h*1.4;
          float radius=.34+h*.92;
          ` : `
          vec2 center=vec2(.12+.52*h+sin(h*8.-uTime*.35)*.3,cos(h*6.-uTime*.28)*.22);
@@ -112,5 +113,6 @@ export function createVolume(kind, config, depthTexture) {
      }`
  });
  const mesh=new THREE.Mesh(geometry,material);mesh.frustumCulled=false;mesh.renderOrder=smoke?4:2;
+ mesh.userData.volumeKind=kind;mesh.userData.baseSteps=steps;
  return mesh;
 }

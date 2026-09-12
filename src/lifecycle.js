@@ -5,6 +5,7 @@ import { copyCombustionPose, combustionEnvironment, ensureLogSurface, extinguish
 // Keep the slow burn independent of the flame shader's motion clock.
 export const BURN_SETTINGS = Object.freeze({ step: .5, woodRate: .00165, charRate: .00072, cooling: .0015 });
 export const SPEEDS = [1, 10, 30, 60, 300, 1200];
+export const TENDING = Object.freeze({ lowWood: 1.1, roaringFlame: 2.2, recheck: 45 });
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const randFor = seed => () => {
   seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -55,6 +56,15 @@ export class BurnCycle {
   }
   get queued() { return this.logs.filter(l => l.phase === 'queued').length; }
   get canAdd() { return this.logs.some(l => l.phase === 'queued' || l.phase === 'ash'); }
+  // Wood still on the bed, in whole-log units; ash slots and the queue do not count.
+  get woodOnBed() { return this.logs.reduce((sum, l) => sum + (l.phase === 'queued' || l.phase === 'ash' ? 0 : l.wood * getFuelType(l.fuelType).mass), 0); }
+  // Once the finite queue is spent, a fire left burning is kept alive the way
+  // someone sitting beside it would tend it: a fresh piece only when the wood
+  // is running low, never onto a roaring fire, and never onto a cold bed that
+  // could not light it. This keeps a modest fire going for as long as the page
+  // stays open without ever piling the bed high.
+  get tending() { return this.autoFeed && this.queued === 0 && this.canAdd && this.coalHeat > .12; }
+  get needsFuel() { return this.tending && this.woodOnBed < TENDING.lowWood && this.flame < TENDING.roaringFlame; }
   // Retained heat is a reservoir, so a flame-free coal bed can still be healthy
   // enough to ignite dry wood. Keep coalHeat as the shared rendering signal.
   get coreHeat() { return this.coalHeat; }
@@ -62,7 +72,7 @@ export class BurnCycle {
     return this.coreHeat >= .8 ? 'Very hot' : this.coreHeat >= .55 ? 'Healthy' : this.coreHeat >= .3 ? 'Warming' : this.coreHeat >= .08 ? 'Fading' : 'Cold';
   }
   get burnRateMultiplier() { return .65 + this.coreHeat * 1.1; }
-  addLog(fuelType) {
+  addLog(fuelType, { tended = false } = {}) {
     if (fuelType !== undefined && !Object.hasOwn(FUEL_TYPES, fuelType)) return false;
     let log = this.logs.find(l => l.phase === 'queued');
     if (!log) {
@@ -71,8 +81,8 @@ export class BurnCycle {
       log = this.logs[slot] = this.makeLog(slot, false, fuelType);
     }
     if (fuelType !== undefined) log.fuelType = fuelType;
-    log.phase = 'fresh'; log.addedAt = this.time;
-    this.record(`${getFuelType(log.fuelType).label} ${String(log.id).padStart(2, '0')} added`, 'Fresh wood settles onto the bed');
+    log.phase = 'fresh'; log.addedAt = this.time; log.tended = tended;
+    this.record(`${getFuelType(log.fuelType).label} ${String(log.id).padStart(2, '0')} added`, tended ? 'The fire was running low; a fresh piece keeps it going' : 'Fresh wood settles onto the bed');
     // A fast-burning piece needs a follow-up sooner to keep the stack alight.
     this.nextFeed = this.time + this.feedInterval / Math.max(1, getFuelType(log.fuelType).burnRate);
     this.updateSummary(); return true;
@@ -97,7 +107,11 @@ export class BurnCycle {
   }
   step(dt) {
     this.time += dt;
-    if (this.autoFeed && this.queued && this.time >= this.nextFeed) this.addLog();
+    if (this.autoFeed && this.time >= this.nextFeed) {
+      if (this.queued) this.addLog();
+      else if (this.needsFuel) this.addLog(undefined, { tended: true });
+      else this.nextFeed = this.time + TENDING.recheck;
+    }
     const active = this.logs.filter(l => l.phase !== 'queued' && l.phase !== 'ash');
     const oldFlames = this.logs.map(l => l.flame);
     const oldCoalHeat = this.coalHeat;

@@ -15,14 +15,16 @@ export function woodTextures(seed = 5, mode = 0) {
   const [bark, b] = canvas(size), [emission, e] = canvas(size);
   b.fillStyle = '#080604'; b.fillRect(0, 0, size, size);
   e.fillStyle = '#000'; e.fillRect(0, 0, size, size);
-  const rows=27,cols=24,cells=[];
-  for(let y=-2;y<=rows+2;y++)for(let x=-2;x<=cols+2;x++)cells.push({x:x+.1+rand()*.8,y:y+.1+rand()*.8,t:rand(),ix:x,iy:y});
-  const grid=new Map(cells.map(c=>[`${c.ix},${c.iy}`,c]));
+  // Bark plates come from a jittered-grid Voronoi. The grid is a flat array
+  // indexed arithmetically: the earlier string-keyed map built nine strings
+  // per pixel, nine million allocations before the first frame.
+  const rows=27,cols=24,stride=cols+5,cells=[];
+  for(let y=-2;y<=rows+2;y++)for(let x=-2;x<=cols+2;x++)cells.push({x:x+.1+rand()*.8,y:y+.1+rand()*.8,t:rand()});
   const pixels=b.createImageData(size,size),glow=e.createImageData(size,size);
   for(let y=0;y<size;y++)for(let x=0;x<size;x++){
-    const px=x/size*cols,py=y/size*rows;let d1=9,d2=9,nearest;
+    const px=x/size*cols,py=y/size*rows,cx=Math.floor(px)+2,cy=Math.floor(py)+2;let d1=9,d2=9,nearest;
     for(let yy=-1;yy<=1;yy++)for(let xx=-1;xx<=1;xx++){
-      const c=grid.get(`${Math.floor(px)+xx},${Math.floor(py)+yy}`),d=(px-c.x)**2+(py-c.y)**2;
+      const c=cells[(cy+yy)*stride+cx+xx],d=(px-c.x)**2+(py-c.y)**2;
       if(d<d1){d2=d1;d1=d;nearest=c;}else if(d<d2)d2=d;
     }
     const edge=Math.sqrt(d2)-Math.sqrt(d1),plate=Math.min(1,edge*17),grain=(Math.sin(x*.8+Math.sin(y*.1))+rand()*3)*1.5;
