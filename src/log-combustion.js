@@ -102,8 +102,14 @@ export function combustionEnvironment(log, pose) {
   // The reservoir calibration assumes a crossed log in the coal bed. Preserve
   // that calibration in standalone cycles; live geometry reduces it as fuel
   // moves away from the bed, so distant logs cannot feed a central fire.
+  // Unit coupling is the mean exposure of the seven designed slots (0.39), so
+  // a settled crossed log burns as the reservoir model was tuned and only the
+  // best-placed piece exceeds it. Normalising to the single best slot instead
+  // ran the whole live pile at three quarters of the calibration, which left
+  // fresh wood on a cooling bed too marginal to catch and the tended fire
+  // went out within a couple of hours at every burn speed.
   surface.exposure = exposure / COUNT;
-  surface.bedCoupling = pose ? clamp(surface.exposure / .49, 0, 1.12) : 1;
+  surface.bedCoupling = pose ? clamp(surface.exposure / .39, 0, 1.12) : 1;
   surface.pose = actual;
   return surface;
 }

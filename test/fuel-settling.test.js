@@ -120,3 +120,31 @@ test('replacing a slot with another category rebuilds its pose even when its id 
   }
   disposeFuelMesh(mesh);
 });
+
+test('a new arrival is dropped onto the settled pile, never onto a piece that is still falling', () => {
+  const definitions = [[[-1, .3, 0], [1, .3, 0], .25], [[0, .3, -1], [0, .3, 1], .25], [[-1, .3, .3], [1, .3, -.3], .25]];
+  // Two identical piles; in one the second piece is still in the air when the
+  // third arrives a few frames later, as happens at 1200× when wood is added
+  // every few real tenths of a second. The third piece must start its drop
+  // from the same height in both.
+  const build = () => {
+    const logs = definitions.map((_, slot) => ({ ...fuel('log', slot), phase: slot === 0 ? 'fresh' : 'queued', addedAt: slot === 0 ? -1 : null }));
+    const state = createLogSettling(definitions, 5);
+    settle(state, logs, flatGround, 120);
+    return { logs, state };
+  };
+  const stacked = build(), control = build();
+  Object.assign(stacked.logs[1], { phase: 'fresh', addedAt: 10 });
+  for (let frame = 0; frame < 3; frame++) {
+    updateLogSettling(stacked.state, { logs: stacked.logs }, 3 + frame / 60, flatGround);
+    updateLogSettling(control.state, { logs: control.logs }, 3 + frame / 60, flatGround);
+  }
+  assert.ok(stacked.state.logs[1].inFlight && stacked.state.logs[1].y > stacked.state.logs[0].y + .5, 'the second piece is still falling');
+  for (const sample of [stacked, control]) {
+    Object.assign(sample.logs[2], { phase: 'fresh', addedAt: 11 });
+    updateLogSettling(sample.state, { logs: sample.logs }, 3 + 3 / 60, flatGround);
+  }
+  assert.ok(Math.abs(stacked.state.logs[2].fallFrom - control.state.logs[2].fallFrom) < 1e-9, `the falling piece is not a support (${stacked.state.logs[2].fallFrom.toFixed(3)} vs ${control.state.logs[2].fallFrom.toFixed(3)})`);
+  settle(stacked.state, stacked.logs, flatGround, 240, 4);
+  for (const pose of stacked.state.logs) assert.ok(pose.y < 1.5 && !pose.inFlight, `every piece comes to rest on the pile (${pose.y.toFixed(2)}, flight ${pose.inFlight})`);
+});

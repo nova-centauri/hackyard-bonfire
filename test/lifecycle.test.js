@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BurnCycle } from '../src/lifecycle.js';
+import { BURN_SETTINGS, BurnCycle } from '../src/lifecycle.js';
 import { FUEL_TYPES, getFuelType } from '../src/fuel-types.js';
 
 const physicalState = cycle => ({ time: cycle.time, coalHeat: cycle.coalHeat, coalMass: cycle.coalMass, ashMass: cycle.ashMass, logs: cycle.logs });
@@ -129,6 +129,51 @@ test('automatic feeding places one intact log at a time, then keeps a modest fir
   // Unchecking the switch lets the same fire burn all the way out.
   cycle.setAutoFeed(false); cycle.advance(14400);
   assert.equal(cycle.phase, 'Cold fire bed'); assert.equal(cycle.coalHeat, 0);
+});
+
+// A horizontal log through the fire's centre at x=0; further out it lies past
+// the coals where the bed alone cannot heat it to ignition.
+const poseAt = (x = 0, id) => ({ id, a: [x - 1.4, .34, 0], b: [x + 1.4, .34, 0], radius: .24 });
+
+test('tending counts only wood that can burn, so a log that rolled to the edge does not leave the fire untended', () => {
+  const cycle = new BurnCycle(7); cycle.setAutoFeed(false);
+  for (const log of cycle.logs) { log.phase = 'ash'; log.wood = 0; log.char = 0; log.flame = 0; }
+  cycle.coalHeat = .95; cycle.coalMass = .7;
+  const near = cycle.logs[0], far = cycle.logs[1];
+  Object.assign(near, { phase: 'burning', wood: .25, char: .12, moisture: 0, temperature: 1, flame: 1, everLit: true, addedAt: -200 });
+  Object.assign(far, { phase: 'fresh', wood: 1, char: 0, moisture: .1, initialMoisture: .1, temperature: .2, flame: 0, everLit: false, addedAt: 0 });
+  cycle.setLogPoses([poseAt(0, near.id), poseAt(2, far.id)]);
+  cycle.advance(1);
+  assert.ok(far.surface.bedCoupling < .35, `the far log is poorly coupled (${far.surface.bedCoupling})`);
+  assert.equal(far.catching, false); assert.equal(near.catching, true);
+  assert.ok(cycle.woodOnBed > 1.1, 'by mass there is plenty of wood on the bed');
+  assert.ok(cycle.burnableWood < 1.1, 'but only the burning piece can carry the fire');
+  cycle.setAutoFeed(true); cycle.nextFeed = cycle.time;
+  cycle.advance(BURN_SETTINGS.step);
+  const added = cycle.logs.find(l => l.tended);
+  assert.ok(added, 'a fresh piece is added while the far log still lies whole');
+  assert.equal(far.wood, 1); assert.equal(far.everLit, false);
+  // The waiting cap: the far log and the fresh piece are both waiting, so a third is not added.
+  assert.equal(cycle.waitingPieces, 2); assert.equal(cycle.needsFuel, false);
+  near.wood = 0; near.char = 0; cycle.updateSummary();
+  assert.equal(cycle.needsFuel, false, 'two pieces already waiting to catch');
+  added.everLit = true; added.flame = .5; cycle.updateSummary();
+  assert.equal(cycle.waitingPieces, 1); assert.equal(cycle.needsFuel, true);
+});
+
+test('a falling piece keeps its last resting pose until it lands, and a new arrival uses the calibrated slot', () => {
+  const cycle = new BurnCycle(7); const log = cycle.logs[0];
+  cycle.setLogPoses([poseAt(0, log.id)]);
+  const rested = cycle.logPoses[0];
+  assert.ok(rested && rested.a[0] < 0);
+  cycle.setLogPoses([{ ...poseAt(3, log.id), inFlight: true }]);
+  assert.equal(cycle.logPoses[0], rested, 'a drop away from the coals is not a burn position');
+  cycle.setLogPoses([{ ...poseAt(3, log.id + 100), inFlight: true }]);
+  assert.equal(cycle.logPoses[0], null, 'a piece that has never landed has no live pose');
+  cycle.advance(BURN_SETTINGS.step);
+  assert.equal(cycle.logs[0].surface.bedCoupling, 1, 'the calibrated slot stands in until the piece lands');
+  cycle.setLogPoses([poseAt(3, log.id)]);
+  assert.ok(cycle.logPoses[0].a[0] > 0, 'a landed pose is taken as it is');
 });
 
 test('tending never adds wood to a roaring fire or a cold bed', () => {

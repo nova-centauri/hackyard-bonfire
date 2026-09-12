@@ -27,9 +27,11 @@ on VPS-01 via the webhook-pull described under [Deploy](#deploy).
 
 - **The fire tends itself.** Waiting pieces are added one at a time. After
   that, with **Keep the fire fed** on (the default), a fresh piece is added
-  only when the wood runs low, never onto a roaring fire and never onto a bed
-  too cold to light it, so a modest fire lasts as long as the page is open.
-  Untick it to let the fire burn all the way down to cold ash.
+  only when the wood that can still catch runs low (a log that rolled to the
+  edge of the pit does not count), never onto a roaring fire, never onto a bed
+  too cold to light it and never with two pieces already waiting to catch, so
+  a modest fire lasts as long as the page is open at any burn speed. Untick
+  it to let the fire burn all the way down to cold ash.
 - **Wood pops.** Wet, flaming wood pops most (a fresh log spits for a while
   after it catches). Each pop throws a tight burst of sparks from the actual
   log surface, spikes the firelight and cracks in the audio, all from one
