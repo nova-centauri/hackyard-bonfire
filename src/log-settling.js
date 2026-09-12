@@ -195,12 +195,57 @@ function interval(pose, axis) {
   return { min, max };
 }
 
+const isRoundWood = pose => !isBoard(pose.fuelType) && pose.fuelType !== 'stump';
+
+// Distance from the straight physics axis to the rendered surface along a
+// world direction, including oval, knots, bend and any fracture notch.
+function radialReach(pose, t, worldDir) {
+  const angle = Math.atan2(worldDir.dot(pose.sectionZ), worldDir.dot(pose.sectionX));
+  ringSurfacePoint(pose, t, angle, ringPoint);
+  ringCentre.copy(pose.a).addScaledVector(pose.axis, clamp(t, 0, 1) * pose.length);
+  return (ringPoint.x - ringCentre.x) * worldDir.x
+    + (ringPoint.y - ringCentre.y) * worldDir.y
+    + (ringPoint.z - ringCentre.z) * worldDir.z;
+}
+
+// Side-on contact for round wood uses the real profile instead of a 16-gon
+// hull, which sat inside the mesh and let logs sink into each other.
+function roundWoodContact(a, b, closest) {
+  const delta = closest.a.clone().sub(closest.b);
+  const distSq = delta.lengthSq();
+  let normal;
+  if (distSq < 1e-12) {
+    normal = a.sectionX.clone();
+    if (normal.dot(b.position.clone().sub(a.position)) < 0) normal.negate();
+  } else normal = delta.normalize();
+  if (Math.abs(normal.dot(a.axis)) > .35 || Math.abs(normal.dot(b.axis)) > .35) return null;
+  const reachA = radialReach(a, closest.t, normal.clone().negate());
+  const reachB = radialReach(b, closest.s, normal);
+  const depth = reachA + reachB - Math.sqrt(distSq);
+  if (depth < -SKIN) return null;
+  const point = closest.a.clone().addScaledVector(normal, -reachA + depth * .5);
+  const points = [point];
+  if (Math.abs(a.axis.dot(b.axis)) > .96 && Math.abs(normal.dot(a.axis)) < .15) {
+    const along = a.axis, axisA = interval(a, along), axisB = interval(b, along);
+    const lo = Math.max(axisA.min, axisB.min), hi = Math.min(axisA.max, axisB.max);
+    if (hi - lo > Math.min(a.radius, b.radius) * 1.4) {
+      points[0] = point.clone().addScaledVector(along, lo + (hi - lo) * .15 - point.dot(along));
+      points.push(point.clone().addScaledVector(along, hi - (hi - lo) * .15 - point.dot(along)));
+    }
+  }
+  return { a, b, normal, depth, points };
+}
+
 // Finite convex cross sections: caps and side faces are tested separately, so
 // short stumps/planks do not acquire invisible capsule ends. Axes include the
 // closest rod separation, both end normals and oriented box edge cross products.
 function bodyContact(a, b) {
   if (a.position.distanceToSquared(b.position) > (a.boundRadius + b.boundRadius + SKIN) ** 2) return null;
   const closest = closestSegments(a.a, a.b, b.a, b.b), delta = a.position.clone().sub(b.position);
+  if (isRoundWood(a) && isRoundWood(b)) {
+    const round = roundWoodContact(a, b, closest);
+    if (round) return round;
+  }
   const axes = [closest.a.clone().sub(closest.b), a.axis, b.axis, a.axis.clone().cross(b.axis),
     a.sectionX, a.sectionZ, b.sectionX, b.sectionZ];
   const basisA = [a.axis, a.sectionX, a.sectionZ], basisB = [b.axis, b.sectionX, b.sectionZ];
@@ -302,7 +347,9 @@ function roundGroundCandidates(pose, height, centreHeight, candidates) {
     }
     ringSurfacePoint(pose, t, bestAngle, ringPoint);
     if (aboveGround(pose, ringPoint, centreHeight)) continue;
-    const penetration = height(ringPoint.x, ringPoint.z) + SKIN - ringPoint.y;
+    // Detect within the skin; rest on the soil itself. Adding the skin to the
+    // depth used to hover every piece a centimetre above the dirt.
+    const penetration = height(ringPoint.x, ringPoint.z) - ringPoint.y;
     if (penetration >= -SKIN) candidates.push({ point: ringPoint.clone(), depth: penetration });
   }
 }
@@ -315,7 +362,7 @@ function groundContacts(pose, height) {
   if (isBoard(pose.fuelType) || Math.abs(pose.axis.y) > .9) {
     for (const point of pose.worldPoints) {
       if (aboveGround(pose, point, centreHeight)) continue;
-      const penetration = height(point.x, point.z) + SKIN - point.y;
+      const penetration = height(point.x, point.z) - point.y;
       if (penetration >= -SKIN) candidates.push({ point, depth: penetration });
     }
   } else roundGroundCandidates(pose, height, centreHeight, candidates);
@@ -570,7 +617,7 @@ function placementContacts(pose, existing, height) {
     let minimum = -Infinity;
     for (let i = 0; i < pose.shapeSides; i++) {
       const p = pose.worldPoints[row * pose.shapeSides + i];
-      minimum = Math.max(minimum, height(p.x, p.z) + SKIN + axisY - p.y);
+      minimum = Math.max(minimum, height(p.x, p.z) + axisY - p.y);
     }
     contacts.push({ t, height: minimum });
   }

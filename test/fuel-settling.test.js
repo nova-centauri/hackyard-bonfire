@@ -39,14 +39,14 @@ test('flared stump roots settle on the actual ground surface instead of sinking 
     settle(state, [log], ground);
     applyPose(mesh, state.logs[0]);
     const clearance = minimumClearance(mesh, ground);
-    assert.ok(clearance > .005 && clearance < .02, `stump seed ${seed} must touch the soil without buried roots: ${clearance}`);
+    assert.ok(clearance > -.002 && clearance < .008, `stump seed ${seed} must touch the soil without buried roots: ${clearance}`);
     assert.ok(state.logs[0].collisionRadius > state.logs[0].radius * 1.2, 'root flare expands collision bounds without enlarging the rendered mesh again');
     // Shrinking/compression must continue to use the same physical surface.
     log.wood = .4; log.char = .1; log.scale = .88;
     settle(state, [log], ground, 180, 3);
     applyPose(mesh, state.logs[0]);
     const burnedClearance = minimumClearance(mesh, ground);
-    assert.ok(burnedClearance > .005 && burnedClearance < .02, `burned stump remains seated: ${burnedClearance}`);
+    assert.ok(burnedClearance > -.002 && burnedClearance < .008, `burned stump remains seated: ${burnedClearance}`);
     disposeFuelMesh(mesh);
   }
 });
@@ -62,7 +62,7 @@ test('side-by-side 2×4s with a visible gap do not create a phantom support', ()
   state.logs.forEach((pose, index) => {
     assert.deepEqual(pose.supports, [], 'neither separated board rests on the other');
     applyPose(meshes[index], pose);
-    assert.ok(Math.abs(minimumClearance(meshes[index]) - .012) < 1e-6, 'both boards rest directly on the ground');
+    assert.ok(Math.abs(minimumClearance(meshes[index])) < .003, 'both boards rest directly on the ground');
     disposeFuelMesh(meshes[index]);
   });
 });
@@ -74,7 +74,7 @@ test('plank ground contact follows its rectangular section as the board turns', 
     const state = createLogSettling([definition], 1, [mesh.geometry.userData.profile]);
     settle(state, [log]); applyPose(mesh, state.logs[0]);
     const clearance = minimumClearance(mesh);
-    assert.ok(clearance > .009 && clearance < .014, `the board's actual lowest corner settles within the contact skin at angle ${angle}: ${clearance}`);
+    assert.ok(clearance > -.002 && clearance < .006, `the board's actual lowest corner settles within a millimetre of the soil at angle ${angle}: ${clearance}`);
     disposeFuelMesh(mesh);
   }
 });
@@ -128,7 +128,7 @@ test('pallet, cardboard and newspaper rest on their thin faces without tunneling
     settle(state, [log]);
     applyPose(mesh, state.logs[0]);
     const clearance = minimumClearance(mesh);
-    assert.ok(clearance > .005 && clearance < .025, `${fuelType} must sit on the soil: ${clearance}`);
+    assert.ok(clearance > -.002 && clearance < .008, `${fuelType} must sit on the soil: ${clearance}`);
     assert.equal(state.logs[0].fuelType, fuelType);
     disposeFuelMesh(mesh);
   }
@@ -160,4 +160,14 @@ test('a new arrival is dropped onto the settled pile, never onto a piece that is
   assert.ok(Math.abs(stacked.state.logs[2].fallFrom - control.state.logs[2].fallFrom) < 1e-9, `the falling piece is not a support (${stacked.state.logs[2].fallFrom.toFixed(3)} vs ${control.state.logs[2].fallFrom.toFixed(3)})`);
   settle(stacked.state, stacked.logs, flatGround, 240, 4);
   for (const pose of stacked.state.logs) assert.ok(pose.y < 1.5 && !pose.inFlight, `every piece comes to rest on the pile (${pose.y.toFixed(2)}, flight ${pose.inFlight})`);
+});
+
+test('crossed round logs keep two-radii of separation instead of sinking into a 16-gon hull', () => {
+  const definitions = [[[-1, .2, 0], [1, .2, 0], .2], [[0, .6, -1], [0, .6, 1], .2]];
+  const logs = definitions.map((_, slot) => fuel('log', slot));
+  const state = createLogSettling(definitions, 9);
+  settle(state, logs);
+  const gap = state.logs[1].y - state.logs[0].y;
+  assert.ok(Math.abs(gap - .4) < .012, `axis gap ${gap} is two rendered radii`);
+  assert.ok(state.logs[1].supports.includes(0));
 });

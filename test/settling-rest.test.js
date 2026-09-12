@@ -69,6 +69,6 @@ test('round wood touches the ground along its true lowest line, not a sampled fa
     // ripple with the facet phase of the sampled collision points.
     state.logs[0].angularVelocity.set(1.5, 0, 0);
     updateLogSettling(state, cycle, frame / 60, () => -.2);
-    assert.ok(Math.abs(state.logs[0].y - .012) < .004, `axis height ${state.logs[0].y} stays one radius plus the contact skin above the floor`);
+    assert.ok(Math.abs(state.logs[0].y) < .005, `axis height ${state.logs[0].y} stays one radius above the floor as it rolls`);
   }
 });

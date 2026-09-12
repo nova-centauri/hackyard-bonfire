@@ -374,13 +374,13 @@ export class BonfireViewer {
   let ashSurface=dirt;
   if(hybrid){dirt.visible=false;ashSurface=addDirtClearing(opaque,config.seed);}
   if(mode===3)dirt.material=new THREE.MeshStandardMaterial({color:'#121820',roughness:.23,metalness:.8});
-  const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':'#9cadc6',mode===2&&!hybrid?'#827f72':'#211915',hybrid?.14:mode===2?2.3:.65);scene.add(ambient);
-  const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':'#b2c9e4',hybrid?.36:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=!hybrid;
+  const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':hybrid?'#c4b496':'#9cadc6',mode===2&&!hybrid?'#827f72':'#1c1612',hybrid?.2:mode===2?2.3:.65);scene.add(ambient);
+  const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':hybrid?'#c8c0d2':'#b2c9e4',hybrid?.28:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=!hybrid;
   moon.shadow.mapSize.set(2048,2048);moon.shadow.camera.left=-4;moon.shadow.camera.right=4;moon.shadow.camera.top=5;moon.shadow.camera.bottom=-4;moon.shadow.normalBias=.035;scene.add(moon);
-  const light=new THREE.PointLight('#ff9a43',hybrid?24:mode===2?7:21,hybrid?7:9,2);light.position.set(0,hybrid?.9:1.45,0);scene.add(light);
-  if(hybrid){light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.08;light.shadow.camera.far=7;light.shadow.bias=-.001;light.shadow.normalBias=.025;}
-  const coreLight=new THREE.PointLight('#ff420a',hybrid?4.5:8,hybrid?3.5:5,2);coreLight.position.set(0,hybrid?.14:.38,.3);scene.add(coreLight);
-  const rim=new THREE.DirectionalLight('#ffbe70',hybrid?.045:mode===3?2:.4);rim.position.set(0,3,-5);scene.add(rim);
+  const light=new THREE.PointLight('#ff9a43',hybrid?22:mode===2?7:21,hybrid?6.5:9,2);light.position.set(0,hybrid?.85:1.45,0);scene.add(light);
+  if(hybrid){light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.12;light.shadow.camera.far=6.5;light.shadow.bias=-.0006;light.shadow.normalBias=.016;light.shadow.radius=1.6;}
+  const coreLight=new THREE.PointLight('#ff4a12',hybrid?5.6:8,hybrid?3.2:5,2);coreLight.position.set(0,hybrid?.16:.38,.08);scene.add(coreLight);
+  const rim=new THREE.DirectionalLight('#ffbe70',hybrid?.07:mode===3?2:.4);rim.position.set(0,3,-5);scene.add(rim);
   const barkMat=new THREE.MeshStandardMaterial({map:wood.bark,bumpMap:wood.bark,bumpScale:.04,roughness:.99,emissiveMap:wood.emission,emissive:'#ffb68b',emissiveIntensity:mode===4?1.65:.9});
   const endMat=new THREE.MeshStandardMaterial({map:wood.end,bumpMap:wood.end,bumpScale:.025,roughness:.95,emissiveMap:wood.endGlow,emissive:'#ff5310',emissiveIntensity:1.4});
   const exposedMat=new THREE.MeshStandardMaterial({map:wood.exposed,bumpMap:wood.exposed,bumpScale:.006,roughness:.96,emissiveMap:wood.emission,emissive:'#ff6319',emissiveIntensity:.6});

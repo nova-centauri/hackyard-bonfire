@@ -87,7 +87,8 @@ it fired. The pile now sleeps:
 - Round wood touches the ground along the true lowest line of each
   cross-section ring, sampled from the log profile, rather than a 16-sided
   prism, and rolling resistance is solved as a bounded angular impulse beside
-  friction. Big logs still roll downhill; char crumbs stay where they land.
+  friction. The contact skin is only for detection; wood rests on the soil.
+  Big logs still roll downhill; char crumbs stay where they land.
 
 Settled cost is now about 1 ms per frame with the pile asleep 80–90% of the
 time. The regression test in `test/settling-rest.test.js` bounds terrain
