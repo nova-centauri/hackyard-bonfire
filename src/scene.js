@@ -22,6 +22,8 @@ import { createEmbers } from './embers.js';
 import { createSteam } from './steam.js';
 import { createTwigInstances } from './twig-render.js';
 import { createWeather } from './weather.js';
+import { TEXTURE_MANIFEST } from './texture-manifest.js';
+import { collectMaterials, loadAuthoredTextures } from './texture-loader.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -191,6 +193,14 @@ export class BonfireViewer {
   this.governor.lock(tier);this.qualityStarted=true;this.applyQuality(tier);
  }
  setVignette(strength) { this.vignette=Math.max(0,Math.min(1,strength));this.queueRender(); }
+ // Authored textures (src/texture-manifest.js) replace the procedural ones in
+ // place once they decode. With an empty manifest nothing is fetched.
+ loadTextures(study) {
+  if(study.texturesRequested||!Object.keys(TEXTURE_MANIFEST).length)return;
+  study.texturesRequested=true;
+  loadAuthoredTextures(TEXTURE_MANIFEST,study.textureRegistry,()=>collectMaterials([study.scene]),{base:import.meta.env?.BASE_URL||'/'})
+   .then(report=>{console.info('Bonfire textures:',report);this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;this.queueRender();});
+ }
  // Project the flames' centre, top and width into screen space for the haze.
  updateFinishUniforms() {
   const finish=this.finish.uniforms,study=this.current,aspect=this.renderSize.x/Math.max(1,this.renderSize.y);
@@ -215,6 +225,7 @@ export class BonfireViewer {
   if(!this.scenes.has(config.id))this.scenes.set(config.id,this.buildScene(config));
   this.current=this.scenes.get(config.id);this.renderPass.scene=this.current.scene;
   this.applyStudyQuality(this.current);this.governor.reset(performance.now(),'scene');
+  this.loadTextures(this.current);
   this.poker?.sync();
   this.current.burnSpeed=this.speed;
   this.lastTick=null;this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;
@@ -388,6 +399,9 @@ export class BonfireViewer {
   opaque.add(coals);
   if(!hybrid)updateAshBed(ash,{seed:config.seed,resetSerial:0,time:0,coalMass:.5,ashMass:.2},coals,0,true);
   const stoneRing=addStoneRing(opaque,{seed:config.seed,mode,hybrid});
+  // Handles for the texture loader: each procedural texture and the slots it fills.
+  const textureRegistry={bark:{map:wood.bark,bump:wood.bark,emissive:wood.emission},endGrain:{map:wood.end,bump:wood.end,emissive:wood.endGlow},
+    exposedWood:{map:wood.exposed,bump:wood.exposed},soil:{map:ashSurface.material.map,bump:ashSurface.material.bumpMap},smokePuff:{map:this.cloud}};
   const debris=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),new THREE.MeshStandardMaterial({color:mode===2?'#777267':'#777067',roughness:1}),310);
   for(let i=0;i<310;i++){
     const a=rand()*Math.PI*2,r=Math.sqrt(rand())*3.25;
@@ -426,7 +440,7 @@ export class BonfireViewer {
   if(hybrid){twigs.position.y=-.16;layers.flames.children.forEach(m=>{if(m.userData.twigFlame)m.position.y=-.16;});}
   const twigInstances=createTwigInstances(twigs,layers);
   const study={groundHeight:hybrid?groundHeight:()=>0,rockColliders:stoneRing.userData.colliders,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0,
-    shadowLights:[light,moon].filter(l=>l.castShadow),steam,embers,twigInstances};
+    shadowLights:[light,moon].filter(l=>l.castShadow),steam,embers,twigInstances,textureRegistry};
   if(config.animated){
     study.motion=createMotionState(layers,{embers,steam,twigInstances,lights:[light,coreLight],coalMaterial:coalMat,barkMaterial:barkMat});
     study.weather=createWeather(config.seed);study.flameCentroid=new THREE.Vector3(0,.6,0);study.flameHeight=2.4;
