@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BURN_SETTINGS, BurnCycle, SPEEDS } from '../src/lifecycle.js';
-import { FUEL_TYPES, FUEL_KIND_IDS, getFuelType, pickRandomFuelKind } from '../src/fuel-types.js';
+import { FUEL_TYPES, FUEL_KIND_IDS, WOOD_SPECIES_IDS, getFuelType, pickRandomFuelKind } from '../src/fuel-types.js';
 
 const physicalState = cycle => ({ time: cycle.time, coalHeat: cycle.coalHeat, coalMass: cycle.coalMass, ashMass: cycle.ashMass, logs: cycle.logs });
 
@@ -230,14 +230,24 @@ test('stopping feed holds queued logs and manual addition takes exactly one', ()
 });
 
 test('fuel definitions are immutable, distinct, and safely fall back for unknown types', () => {
-  assert.deepEqual(Object.keys(FUEL_TYPES), ['log', 'small-log', 'kindling', 'plank', 'stump', 'pallet', 'cardboard', 'newspaper']);
+  assert.deepEqual(Object.keys(FUEL_TYPES), [
+    'log', 'small-log', 'kindling', 'plank', 'stump', 'pallet', 'cardboard', 'newspaper',
+    'hickory', 'maple', 'oak', 'spruce', 'birch', 'white-birch', 'pine', 'cedar', 'walnut',
+  ]);
+  assert.deepEqual([...WOOD_SPECIES_IDS], ['hickory', 'maple', 'oak', 'spruce', 'birch', 'white-birch', 'pine', 'cedar', 'walnut']);
   assert.equal(getFuelType(), FUEL_TYPES.log);
   for (const invalid of ['missing', '__proto__', 'constructor', null]) assert.equal(getFuelType(invalid), FUEL_TYPES.log);
   assert.ok(Object.isFrozen(FUEL_TYPES));
   for (const definition of Object.values(FUEL_TYPES)) {
     assert.ok(Object.isFrozen(definition));
-    for (const key of ['lengthScale', 'radiusScale', 'burnRate', 'heatRate', 'heatOutput', 'mass', 'charYield']) {
+    for (const key of ['lengthScale', 'radiusScale', 'burnRate', 'heatRate', 'heatOutput', 'mass', 'ashYield']) {
       assert.ok(Number.isFinite(definition[key]) && definition[key] > 0, key);
+    }
+    if (definition.ashPath) {
+      assert.equal(definition.charYield, 0);
+      assert.equal(definition.shape, 'wad');
+    } else {
+      assert.ok(definition.charYield > 0);
     }
   }
   assert.ok(FUEL_TYPES.kindling.radiusScale < FUEL_TYPES['small-log'].radiusScale);
@@ -246,8 +256,16 @@ test('fuel definitions are immutable, distinct, and safely fall back for unknown
   assert.ok(FUEL_TYPES.newspaper.burnRate > FUEL_TYPES.cardboard.burnRate);
   assert.ok(FUEL_TYPES.cardboard.burnRate > FUEL_TYPES.pallet.burnRate);
   assert.ok(FUEL_TYPES.pallet.burnRate > FUEL_TYPES.plank.burnRate);
-  assert.ok(FUEL_TYPES.newspaper.charYield < FUEL_TYPES.cardboard.charYield);
+  assert.equal(FUEL_TYPES.newspaper.charYield, 0);
+  assert.equal(FUEL_TYPES.newspaper.ashPath, true);
+  assert.ok(FUEL_TYPES.newspaper.ashYield > FUEL_TYPES.log.ashYield);
   assert.ok(FUEL_TYPES.cardboard.charYield < FUEL_TYPES.log.charYield);
+  assert.ok(FUEL_TYPES.oak.charYield > FUEL_TYPES.pine.charYield);
+  assert.ok(FUEL_TYPES.pine.popScale > FUEL_TYPES.maple.popScale);
+  for (const id of WOOD_SPECIES_IDS) {
+    assert.ok(FUEL_TYPES[id].look.barkColor);
+    assert.ok(FUEL_TYPES[id].look.woodColor);
+  }
 });
 
 test('burn speeds include slower and faster steps around real time', () => {
@@ -270,6 +288,7 @@ test('seeded piles keep solid supports and lighter fuel, with occasional planks,
   assert.ok(counts.pallet / samples > .04 && counts.pallet / samples < .14);
   assert.equal(counts.cardboard, 0);
   assert.equal(counts.newspaper, 0);
+  for (const id of WOOD_SPECIES_IDS) assert.equal(counts[id], 0);
   assert.ok(counts.stump / samples > .01 && counts.stump / samples < .055);
 });
 
@@ -409,7 +428,7 @@ test('addRandomFuel places one seeded piece of any kind through the ordinary fee
   assert.notDeepEqual(typesOf(42), typesOf(43));
   const kinds = new Set();
   for (let seed = 1; seed <= 200; seed++) kinds.add(typesOf(seed)[0]);
-  for (const kind of ['pallet', 'cardboard', 'newspaper', 'log']) {
+  for (const kind of ['pallet', 'cardboard', 'newspaper', 'log', 'oak', 'white-birch', 'pine']) {
     assert.ok(kinds.has(kind), `random feed eventually chooses ${kind}`);
   }
   const cycle = new BurnCycle(42); cycle.setAutoFeed(false);
@@ -444,6 +463,28 @@ test('paper leaves less char than wood for the wood it consumes', () => {
   }
   const newsYield = news.log.char / Math.max(1e-9, 1 - news.log.wood);
   const logYield = log.log.char / Math.max(1e-9, 1 - log.log.wood);
-  assert.ok(newsYield < logYield * .3, `newspaper char yield ${newsYield.toFixed(3)} vs log ${logYield.toFixed(3)}`);
+  assert.ok(newsYield < logYield * .05, `newspaper char yield ${newsYield.toFixed(3)} vs log ${logYield.toFixed(3)}`);
   assert.ok(1 - news.log.wood > 1 - log.log.wood);
+});
+
+test('newspaper burns straight to ash without a wood-like char path', () => {
+  const { cycle, log } = isolatedLog(.01, .9, 'newspaper');
+  Object.assign(log, { temperature: 1, flame: 1, phase: 'burning', everLit: true, addedAt: -10 });
+  const phases = new Set();
+  let maxChar = 0;
+  for (let second = 0; second < 400; second++) {
+    cycle.advance(1);
+    phases.add(log.phase);
+    maxChar = Math.max(maxChar, log.char);
+    if (log.phase === 'ash') break;
+  }
+  assert.equal(log.phase, 'ash');
+  assert.equal(log.wood, 0);
+  assert.equal(log.char, 0);
+  assert.ok(maxChar < .02, `newspaper must not build a char bed (${maxChar})`);
+  assert.ok(!phases.has('charred') && !phases.has('glowing'));
+  assert.ok(phases.has('burning') || phases.has('catching'));
+  assert.ok(cycle.events.some(event => event.title.includes('became ash')));
+  assert.ok(!cycle.events.some(event => event.detail.includes('core keeps glowing')));
+  assert.ok(log.ash > .05);
 });

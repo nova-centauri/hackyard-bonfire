@@ -185,12 +185,12 @@ export class BurnCycle {
       flameSum += log.flame * fuel.heatOutput * Math.min(1, bedCoupling);
       updateLogSurface(log, dt, fuel, { consumed, dry, charBurn, shed, coreHeat: oldCoalHeat });
       let phase;
-      if (log.wood < .009 && log.char < .003) {
+      if ((log.wood < .009 && log.char < .003) || (fuel.ashPath && log.wood < .015)) {
         this.ashMass += (log.wood + log.char) * fuel.mass; log.wood = 0; log.char = 0; log.flame = 0; phase = 'ash';
         extinguishLogSurface(log);
       } else if (this.time - log.addedAt < 3) phase = 'fresh';
       else if (log.wood < .015) phase = 'glowing';
-      else if (log.flame > .08) phase = log.wood < .45 ? 'charred' : log.wood > .92 ? 'catching' : 'burning';
+      else if (log.flame > .08) phase = !fuel.ashPath && log.wood < .45 ? 'charred' : log.wood > .92 ? 'catching' : 'burning';
       else if (log.temperature > .12 && log.moisture > .015) phase = 'drying';
       else if (log.temperature > .20) phase = 'catching';
       else phase = 'cold';

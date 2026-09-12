@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { random } from './textures.js';
+import { getFuelType } from './fuel-types.js';
 
 const TAU = Math.PI * 2;
 const clamp = THREE.MathUtils.clamp;
@@ -42,8 +43,29 @@ export function createLogProfile({ radius, length, seed = 1, faceted = false, fu
     profile.rootFlare = { strength: .22 + rand() * .06, lobes: 5, phase: rand() * TAU };
     profile.check *= .25; profile.cutWobble *= .4; profile.ridge *= 1.12;
   }
+  const look = getFuelType(fuelType).look;
+  if (look) applyWoodLook(profile, look, rand);
   if (faceted) { profile.ridge *= .35; profile.check *= .5; }
   return profile;
+}
+
+function applyWoodLook(profile, look, rand) {
+  if (look.oval != null) profile.oval *= look.oval;
+  if (look.ridge != null) profile.ridge *= look.ridge;
+  if (look.ridges != null) profile.ridges = look.ridges;
+  if (look.bend != null) { profile.bend *= look.bend; profile.bendZ *= look.bend; }
+  if (look.check != null) profile.check *= look.check;
+  if (look.taper != null) profile.taper = look.taper;
+  if (look.peel != null) for (const patch of profile.patches) {
+    patch.curl *= look.peel;
+    if (look.peelWidth) patch.width *= look.peelWidth;
+  }
+  if (look.knotSize != null) for (const knot of profile.knots) knot.size *= look.knotSize;
+  if (look.extraKnots) {
+    for (let i = 0; i < look.extraKnots; i++) {
+      profile.knots.push({ t: .14 + rand() * .72, angle: rand() * TAU, size: (.10 + rand() * .07) * (look.knotSize ?? 1) });
+    }
+  }
 }
 
 export function sampleLogSurface(profile, angle, t, offset = 0, target = new THREE.Vector3()) {

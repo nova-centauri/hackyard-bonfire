@@ -10,7 +10,7 @@ The root URL opens study 08, *Wild draft*, edge to edge in focus mode with
 the menus gone. The gear in the top-right corner rests faintly, brightens
 when you move, and brings the menus back; so does **Esc**. A matching plus
 beside it drops a random piece of fuel (log, kindling, pallet slat,
-cardboard, newspaper, and the rest). Leave focus mode and the page remembers
+cardboard, crumpled newspaper, named woods, and the rest). Leave focus mode and the page remembers
 that; **Focus mode** in the header returns to it. Turn on **Sound** once and
 it comes back on the next visit with your first click.
 
@@ -73,7 +73,7 @@ Drag to orbit, scroll to zoom; arrow keys, `+`, `-` and `0` on the focused
 canvas. **Look closer** presets frame the logs or the ember bed.
 
 **Add fuel** places a log, small log, kindling, 2×4, stump, pallet slat,
-cardboard or newspaper. In focus mode the plus next to the gear drops a
+cardboard, crumpled newspaper, or a named wood. In focus mode the plus next to the gear drops a
 random kind. **Randomize** starts a new seeded fire. **Burn speed** (0.5×
 to 1200×, including 0.75×, 2× and 5×) accelerates only the fuel and heat
 clock; flames, smoke, embers, settling and sound keep real time. **Equip

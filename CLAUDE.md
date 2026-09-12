@@ -23,8 +23,9 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
   frame loop, scene construction (`buildScene`).
 - `src/quality.js` — LoD tiers, size cap, frame-pacing governor (pure).
 - `src/lifecycle.js` — burn clock: fuel, heat, moisture, feed queue, tending.
-- `src/fuel-types.js` — kinds (log, kindling, plank, stump, pallet, cardboard,
-  newspaper), sizes, heat/moisture/char, the uniform random pick.
+- `src/fuel-types.js` — kinds (logs, named woods, kindling, plank, stump,
+  pallet, cardboard, crumpled newspaper), sizes, heat/moisture/char, the
+  uniform random pick.
 - `src/log-combustion.js` — per-log surface cells (heat, wood, char, flame).
 - `src/log-settling.js` — rigid-body settling, sleeping, ground/stone
   contacts, rolling resistance, char fragments.

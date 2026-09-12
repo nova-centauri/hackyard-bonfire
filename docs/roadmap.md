@@ -131,6 +131,11 @@ firelight that stays in the flame volume.
   moved to a v2 key so focus mode is the default for everyone; the gear
   rests at 38 % opacity, stays clickable, and no longer hides when the
   pointer crosses the window edge.
+- 2026-09-12 — Newspaper is a crumpled wad that burns straight to ash
+  (no charred/glowing path). Named woods — hickory, maple, oak, spruce,
+  birch, white birch, pine, cedar, walnut — have their own bark, grain
+  and burn pace. Pallet slats and cardboard stay. Random-feed includes
+  every kind; auto-feed stays generic wood.
 - 2026-09-12 — Scrap fuel on the existing feed queue: pallet slats, cardboard
   and newspapers, each with its own size, look, moisture, heat, flame, char
   and mass. Auto-feed stays mostly wood; a plus beside the focus-mode gear

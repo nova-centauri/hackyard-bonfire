@@ -195,7 +195,7 @@ function interval(pose, axis) {
   return { min, max };
 }
 
-const isRoundWood = pose => !isBoard(pose.fuelType) && pose.fuelType !== 'stump';
+const isRoundWood = pose => getFuelType(pose.fuelType).shape === 'round' && pose.fuelType !== 'stump';
 
 // Distance from the straight physics axis to the rendered surface along a
 // world direction, including oval, knots, bend and any fracture notch.

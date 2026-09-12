@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createFuelGeometry, createFuelMesh, sampleFuelSurface, PLANK_ASPECT_RATIO, boardAspectRatio } from '../src/fuel-geometry.js';
 import { createLogGeometry, createBarkDetails } from '../src/log-geometry.js';
+import { createSceneFuelMesh, disposeFuelMesh } from '../src/fuel-mesh.js';
 
 const pieces = [
   { fuelType: 'log', radius: .25, length: 2.7 },
@@ -12,7 +13,9 @@ const pieces = [
   { fuelType: 'stump', radius: .64, length: .82 },
   { fuelType: 'pallet', radius: .09, length: 1.4 },
   { fuelType: 'cardboard', radius: .11, length: 1.0 },
-  { fuelType: 'newspaper', radius: .08, length: .75 },
+  { fuelType: 'oak', radius: .25, length: 2.7 },
+  { fuelType: 'white-birch', radius: .22, length: 2.5 },
+  { fuelType: 'pine', radius: .21, length: 2.8 },
 ];
 
 function assertWatertight(geometry, label) {
@@ -113,22 +116,58 @@ test('stumps have an uneven flared base and bark details follow that same profil
   assert.ok(expected.distanceTo(actual) < 1e-6, 'exposed wood follows the flared stump surface');
 });
 
-test('pallet, cardboard and newspaper are thin boards with distinct proportions', () => {
+test('pallet and cardboard are thin boards with distinct proportions', () => {
   const plank = createFuelGeometry({ fuelType: 'plank', radius: .14, length: 2.2, seed: 7 });
   const pallet = createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 7 });
   const cardboard = createFuelGeometry({ fuelType: 'cardboard', radius: .11, length: 1.0, seed: 7 });
-  const newspaper = createFuelGeometry({ fuelType: 'newspaper', radius: .08, length: .75, seed: 7 });
   assert.equal(pallet.userData.profile.shape, 'board');
   assert.equal(cardboard.userData.profile.shape, 'board');
-  assert.equal(newspaper.userData.profile.shape, 'board');
   assert.ok(pallet.userData.profile.length < plank.userData.profile.length);
   assert.ok(cardboard.userData.profile.halfDepth < pallet.userData.profile.halfDepth);
-  assert.ok(newspaper.userData.profile.halfDepth <= cardboard.userData.profile.halfDepth);
   assert.ok(cardboard.userData.profile.aspect > PLANK_ASPECT_RATIO);
   assert.equal(boardAspectRatio('plank'), PLANK_ASPECT_RATIO);
   const same = createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 7 });
   assert.deepEqual(pallet.attributes.position.array, same.attributes.position.array);
   assert.deepEqual(pallet.attributes.position.array, createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 8 }).attributes.position.array);
+});
+
+test('newspaper is a crumpled wad, not a sheet, and stays a closed solid', () => {
+  for (const faceted of [false, true]) for (const seed of [1, 42]) {
+    const mesh = createFuelMesh({ fuelType: 'newspaper', radius: .12, length: .32, faceted, seed },
+      new THREE.MeshStandardMaterial(), new THREE.MeshStandardMaterial());
+    assert.equal(mesh.geometry.userData.profile.shape, 'wad');
+    assert.equal(mesh.geometry.userData.fuelType, 'newspaper');
+    assertWatertight(mesh.geometry, `newspaper wad seed ${seed}`);
+    const radii = [];
+    for (let i = 0; i < 36; i++) {
+      const point = sampleFuelSurface(mesh.geometry.userData.profile, i / 36 * Math.PI * 2, .5);
+      radii.push(Math.hypot(point.x, point.z));
+    }
+    assert.ok(Math.max(...radii) - Math.min(...radii) > .015, 'the wad is crumpled, not a smooth ball');
+    const bounds = mesh.geometry.boundingBox;
+    assert.ok(Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x), Math.abs(bounds.min.z), Math.abs(bounds.max.z)) < .12 * 1.55);
+  }
+  const a = createFuelGeometry({ fuelType: 'newspaper', radius: .12, length: .32, seed: 7 });
+  const b = createFuelGeometry({ fuelType: 'newspaper', radius: .12, length: .32, seed: 7 });
+  const c = createFuelGeometry({ fuelType: 'newspaper', radius: .12, length: .32, seed: 8 });
+  assert.deepEqual(a.attributes.position.array, b.attributes.position.array);
+  assert.notDeepEqual(a.attributes.position.array, c.attributes.position.array);
+});
+
+test('named woods keep distinct bark, grain and cut faces', () => {
+  const options = { radius: .25, length: 2.7, seed: 42 };
+  const oak = createFuelGeometry({ ...options, fuelType: 'oak' });
+  const birch = createFuelGeometry({ ...options, fuelType: 'white-birch' });
+  const pine = createFuelGeometry({ ...options, fuelType: 'pine' });
+  const maple = createFuelGeometry({ ...options, fuelType: 'maple' });
+  const hickory = createFuelGeometry({ ...options, fuelType: 'hickory' });
+  assert.ok(oak.userData.profile.ridge > maple.userData.profile.ridge);
+  assert.ok(oak.userData.profile.ridges > birch.userData.profile.ridges);
+  assert.ok(birch.userData.profile.patches[0].curl > oak.userData.profile.patches[0].curl);
+  assert.ok(hickory.userData.profile.patches[0].curl > oak.userData.profile.patches[0].curl);
+  assert.ok(pine.userData.profile.knots.length > maple.userData.profile.knots.length);
+  assert.notDeepEqual(oak.attributes.position.array, birch.attributes.position.array);
+  assert.deepEqual(oak.attributes.position.array, createFuelGeometry({ ...options, fuelType: 'oak' }).attributes.position.array);
 });
 
 test('kindling uses restrained bark and omitting fuelType preserves the existing log shape', () => {
@@ -139,4 +178,18 @@ test('kindling uses restrained bark and omitting fuelType preserves the existing
   assert.ok(kindling.userData.profile.patches[0].curl < log.userData.profile.patches[0].curl * .3);
   assert.deepEqual(log.attributes.position.array, createLogGeometry(options).attributes.position.array);
   assert.deepEqual(kindling.attributes.position.array, createFuelGeometry({ ...options, fuelType: 'kindling' }).attributes.position.array);
+});
+
+test('named woods tint bark and cut faces so oak does not read as white birch', () => {
+  const materials = {
+    barkMat: new THREE.MeshStandardMaterial({ color: '#ffffff' }),
+    endMat: new THREE.MeshStandardMaterial({ color: '#ffffff' }),
+    exposedMat: new THREE.MeshStandardMaterial({ color: '#ffffff' }),
+  };
+  const definition = [[-1, .3, 0], [1, .3, 0], .25];
+  const oak = createSceneFuelMesh({ definition, fuelType: 'oak', seed: 1, mode: 0, hybrid: true }, materials);
+  const birch = createSceneFuelMesh({ definition, fuelType: 'white-birch', seed: 1, mode: 0, hybrid: true }, materials);
+  assert.notEqual(oak.material[0].color.getHex(), birch.material[0].color.getHex());
+  assert.notEqual(oak.material[1].color.getHex(), birch.material[1].color.getHex());
+  disposeFuelMesh(oak); disposeFuelMesh(birch);
 });

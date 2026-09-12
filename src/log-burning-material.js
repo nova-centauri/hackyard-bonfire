@@ -16,7 +16,7 @@ export function burningMaterial(base, uniforms, cap = false) {
     shader.vertexShader = 'varying vec3 vBurnPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvBurnPosition=position;');
     shader.fragmentShader = `varying vec3 vBurnPosition;
-      uniform float uWood,uHeat,uChar,uBurnSlot,uBurnLength,uBurnTime,uLocalizedBurn,uAuthoredEmissive;
+      uniform float uWood,uHeat,uChar,uBurnSlot,uBurnLength,uBurnTime,uLocalizedBurn,uAuthoredEmissive,uAshPath;
       uniform sampler2D uBurnMap;
       float burnHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       float burnNoise(vec2 p,float wrap){
@@ -63,9 +63,11 @@ export function burningMaterial(base, uniforms, cap = false) {
       float crackWidth=mix(.62,1.42,splinterGrain);
       float plateFace=smoothstep(.030*crackWidth-aa,.110*crackWidth+aa,cells.y);
       float fissureHalo=1.-smoothstep(.045*crackWidth,.20*crackWidth,cells.y);
-      vec3 fresh=${cap ? 'diffuseColor.rgb*1.2' : 'mix(vec3(.105,.065,.033),vec3(.38,.27,.15),grain+fineGrain)'};
+      vec3 woodTone=mix(vec3(.105,.065,.033),vec3(.38,.27,.15),grain+fineGrain);
+      vec3 fresh=${cap ? 'diffuseColor.rgb*1.2' : 'mix(woodTone,diffuseColor.rgb,.62)'};
       vec3 charcoal=vec3(.019,.013,.009)*(.5+plateFace*.85+grain*.45);
-      diffuseColor.rgb=mix(fresh,charcoal,burnMask);
+      vec3 spent=uAshPath>.5?vec3(.42,.40,.36):charcoal;
+      diffuseColor.rgb=mix(fresh,spent,burnMask);
       float ashDust=(1.-smoothstep(0.,.035,localWood))*(1.-smoothstep(0.,.025,localChar));
       float crust=smoothstep(.75,.98,cells.z)*(1.-smoothstep(.5,.88,localHeat));
       diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.24,.225,.195),max(ashDust,crust*burnMask)*.8);
@@ -89,6 +91,6 @@ export function burningMaterial(base, uniforms, cap = false) {
       totalEmissiveRadiance=emberColor*plateLight*incandescent*emberBreath*(1.-ashDust)*.72;
     `);
   };
-  material.customProgramCacheKey = () => `localized-ember-plates-${cap ? 'end' : 'bark'}-3`;
+  material.customProgramCacheKey = () => `localized-ember-plates-${cap ? 'end' : 'bark'}-4`;
   return material;
 }

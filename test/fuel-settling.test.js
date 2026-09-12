@@ -80,7 +80,7 @@ test('plank ground contact follows its rectangular section as the board turns', 
 });
 
 test('all categories use the rendered dimensions once, including after shrinkage', () => {
-  for (const fuelType of ['log', 'small-log', 'kindling', 'plank', 'stump', 'pallet', 'cardboard', 'newspaper']) {
+  for (const fuelType of ['log', 'small-log', 'kindling', 'plank', 'stump', 'pallet', 'cardboard', 'newspaper', 'oak', 'white-birch']) {
     const log = { ...fuel(fuelType), scale: .9 }, mesh = buildMesh(sceneDefinition, fuelType);
     const state = createLogSettling([sceneDefinition], 1, [mesh.geometry.userData.profile]);
     settle(state, [log]);
@@ -121,8 +121,8 @@ test('replacing a slot with another category rebuilds its pose even when its id 
   disposeFuelMesh(mesh);
 });
 
-test('pallet, cardboard and newspaper rest on their thin faces without tunneling into the ground', () => {
-  for (const fuelType of ['pallet', 'cardboard', 'newspaper']) {
+test('pallet and cardboard rest on their thin faces without tunneling into the ground', () => {
+  for (const fuelType of ['pallet', 'cardboard']) {
     const log = fuel(fuelType), mesh = buildMesh(sceneDefinition, fuelType);
     const state = createLogSettling([sceneDefinition], 1, [mesh.geometry.userData.profile]);
     settle(state, [log]);
@@ -132,6 +132,17 @@ test('pallet, cardboard and newspaper rest on their thin faces without tunneling
     assert.equal(state.logs[0].fuelType, fuelType);
     disposeFuelMesh(mesh);
   }
+});
+
+test('a crumpled newspaper wad rests on the soil without tunneling', () => {
+  const log = fuel('newspaper'), mesh = buildMesh(sceneDefinition, 'newspaper');
+  const state = createLogSettling([sceneDefinition], 1, [mesh.geometry.userData.profile]);
+  settle(state, [log]);
+  applyPose(mesh, state.logs[0]);
+  const clearance = minimumClearance(mesh);
+  assert.ok(clearance > -.002 && clearance < .012, `newspaper wad must sit on the soil: ${clearance}`);
+  assert.equal(mesh.geometry.userData.profile.shape, 'wad');
+  disposeFuelMesh(mesh);
 });
 
 test('a new arrival is dropped onto the settled pile, never onto a piece that is still falling', () => {
