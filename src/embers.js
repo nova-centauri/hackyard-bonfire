@@ -18,11 +18,11 @@ const emberFunctions = /* glsl */`
   float emberHash(float n){return fract(sin(n)*43758.5453);}
   // seed = (phase, pace, sway, order); returns world position, and writes the
   // normalized age plus a visibility factor for the caller.
-  vec3 emberPosition(vec4 seed, int sourceIndex, float time, out float age, out float visible) {
+  vec3 emberPosition(vec4 seed, int sourceIndex, float time, float trailDelay, out float age, out float visible) {
     vec4 source=uSources[sourceIndex];
     float fuel=uFuel[sourceIndex];
     float life=2.4+seed.z*2.6;
-    age=fract(seed.x+time/life);
+    age=max(0.,fract(seed.x+time/life)-trailDelay/life);
     // Weak fires shed fewer embers: each ember has its own heat threshold.
     float heat=clamp(fuel*1.3,0.,1.)*clamp(uPower*1.25+uCoalHeat*.15,0.,1.);
     visible=step(seed.w,uDensity)*step(.015,fuel)*step(seed.y*.95,heat);
@@ -73,7 +73,7 @@ export function createEmbers({ seed = 22, sources = null, fuel = null, count = E
       ${emberFunctions}
       void main(){
         float age,visible;
-        vec3 p=emberPosition(aSeed,int(aSource+.5),uTime,age,visible);
+        vec3 p=emberPosition(aSeed,int(aSource+.5),uTime,0.,age,visible);
         float alpha;vColor=emberColor(age,aSeed,uTime,alpha);vAlpha=alpha*visible;
         vec4 mv=modelViewMatrix*vec4(p,1.);gl_Position=projectionMatrix*mv;
         float size=(.011+aSeed.w*.019)*(1.-age*.35);
@@ -100,9 +100,10 @@ export function createEmbers({ seed = 22, sources = null, fuel = null, count = E
     vertexShader: /* glsl */`attribute vec4 aSeed;attribute float aSource,aTrail;varying vec3 vColor;varying float vAlpha;
       ${emberFunctions}
       void main(){
-        // The tail vertex is the same ember a moment earlier: a motion trail.
+        // Clamp the tail to this ember's birth; rewinding time could wrap it
+        // into the previous lifetime and draw a streak across the whole plume.
         float age,visible;
-        vec3 p=emberPosition(aSeed,int(aSource+.5),uTime-aTrail*.055,age,visible);
+        vec3 p=emberPosition(aSeed,int(aSource+.5),uTime,aTrail*.055,age,visible);
         float alpha;vColor=emberColor(age,aSeed,uTime,alpha);vAlpha=alpha*visible*.7*(1.-aTrail*.8);
         gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);
       }`,

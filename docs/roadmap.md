@@ -32,6 +32,16 @@ Done in this pass:
   million strings at startup.
 - Authored textures for bark, end grain, exposed wood, soil and steam, with
   OpenGL normals; bark normal is the lighting gain.
+- Patchy char forms first on lower, inward-facing wood; heat crosses thin
+  boards more readily than thick logs. Raised char plates catch firelight,
+  sawn faces vary along the wood, and end grain keeps its separate mapping.
+- A wider warm light pool reveals the dirt, gravel and leaves beyond the
+  stones, using their existing material passes. Coal light fades with the
+  remaining hot mass.
+- Moving-log contacts reuse solver storage and invariant effective masses:
+  84.5% fewer vector clones and 11.3% less CPU time in the measured landing
+  fixture, with unchanged trajectories (`docs/rendering-and-performance.md`).
+  Surface exposure is also reused across burn steps with unchanged geometry.
 
 - Authored bark and end-grain emissive masks steer the burn shader's char
   glow (`src/log-burning-material.js`): a per-slot uniform flag is raised when
@@ -58,8 +68,10 @@ Done in this pass:
 
 Geometry, settling and lighting for the observer fire: logs read as wood
 (bark ridges, sawn checked ends), they sit on the soil and on each other
-instead of hovering or sinking, and the night stays warm and readable with
-firelight that stays in the flame volume.
+instead of hovering or sinking, and their lower surfaces become uneven,
+glowing char. Thin boards can heat through to their upper faces. Firelight
+stays near the flames while a broader diffuse pool reveals the surrounding
+soil. This remains an ambient campfire, with no new controls or activities.
 
 ## Next
 
@@ -149,3 +161,14 @@ firelight that stays in the flame volume.
   fill is warmer and less blue.
 - 2026-09-12 — Footer GitHub link and a collapsed recent-commit log; prompt
   slots backfill from `public/github-log.json` (none invented).
+- 2026-09-12 — Surface and light review: lower/inward heat exposure, uneven
+  carbonization and thickness-dependent heat transfer; separate sawn-face
+  and end-grain char mapping with subtle normal relief. Gas from the lower
+  face still feeds the flame above. Wider textured dirt illumination uses
+  existing draws and lights. Contact-solver scratch reuse and invariant
+  caching preserve trajectories while reducing allocations and fixture CPU
+  cost; exposure caching avoids rebuilding unchanged surface geometry.
+- 2026-09-12 — Ember trails start at the current particle's birth instead of
+  connecting to its previous lifetime. A browser test executes the actual
+  vertex shader at birth and recycling boundaries, including the old formula
+  as a failing comparison (`test/browser/ember-trails.html`).

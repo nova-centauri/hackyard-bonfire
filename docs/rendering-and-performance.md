@@ -32,6 +32,26 @@ Draw calls per frame in the animated studies are about 190 including the
 shadow and depth passes (down from about 630): embers are two draws, steam
 one, twig segments one, twig glows one.
 
+## Wood surfaces and surrounding light
+
+The burn atlas carries uneven heat and char in coordinates attached to each
+piece. Direct exposure favors the lower, inward-facing surface; heat reaches
+the opposite face more readily through thin boards. A cool upper crust does
+not hide the plume: its strength samples the whole emitting axial band.
+This is a visual combustion approximation, not calibrated thermochemistry.
+
+Procedural char plates have a stable seed per piece and a ragged advancing
+front. Bark and sawn faces vary along the wood; end grain uses planar
+coordinates. Small derivative-based normal relief layers over the authored
+wood normals, letting spent charcoal catch moving light without new geometry.
+
+Soil, gravel and leaves share a wider diffuse firelight pool in their
+existing material shaders. Surface color and bumped normals keep the dirt's
+texture visible; the added light requires no extra draw, light source or
+render pass. The existing point light also reaches farther. Flame intensity
+and flicker drive the broad pool, while the smaller coal pool fades with
+both heat and remaining coal mass.
+
 ## Level of detail
 
 `src/quality.js` defines five tiers. Everything in a tier is a runtime value
@@ -94,6 +114,27 @@ Settled cost is now about 1 ms per frame with the pile asleep 80–90% of the
 time. The regression test in `test/settling-rest.test.js` bounds terrain
 samples per frame and the awake fraction.
 
+## Cost while wood moves
+
+The twelve contact-solver iterations reuse temporary vectors and
+quaternions. Normal effective mass is computed once per constraint, after
+all contact-triggered wakes, because the poses and lever arms remain fixed
+during the velocity solve. Friction and rolling resistance still respond to
+the changing velocities on every iteration.
+
+In a deterministic fixture with three falling/rolling logs over 120 frames,
+vector clones fell from 546,876 to 84,799 (84.5% fewer) and quaternion clones
+from 160,964 to zero. Across 30 alternating warmed runs, median total CPU
+time fell from 18.77 ms to 16.65 ms (11.3%). Positions, rotations and velocities
+were unchanged. These are CPU fixture measurements, not browser frame-rate
+gains; `test/settling-performance.test.js` checks the trajectory and allocation
+budget without a timing assertion.
+
+The combustion model also caches geometric exposure while a pose and fuel
+shape remain unchanged. Accelerated burn steps reuse the surface positions,
+thicknesses and exposure instead of rebuilding them; heat and fuel still
+advance on every fixed step. No timing gain is claimed for this cache.
+
 ## Measuring
 
 - `npm test` runs the pure-logic suite in about ten seconds; the settling
@@ -107,6 +148,12 @@ samples per frame and the awake fraction.
   errors, draw-call counts, tier selection and screenshots, useless for
   frame-time numbers. Read the stage `data-*` attributes after
   `data-ready="true"`.
+- With the dev server running, open `/test/browser/ember-trails.html` for the
+  GPU trail regression. WebGL2 transform feedback runs the actual trail
+  vertex shader at seven birth/recycling times and checks that a new ember
+  cannot connect to its previous life. The old formula is a negative
+  control. Completion sets the document's `data-ready="true"` and
+  `data-passed="true"`; `#report` contains the numeric results.
 - On real hardware, `renderer.info.render.calls` is exposed as
   `data-draw-calls`, and the governor's decisions are logged. A frame that
   cannot fit in 33 ms on a 60 Hz display shows as 50 ms intervals and will be
@@ -124,10 +171,10 @@ samples per frame and the awake fraction.
   lever, if needed, is rendering the volumetrics at half resolution with an
   upsample, which would need a separate pass rather than the current single
   colour pass.
-- Physics cost while bodies are awake (fresh log landing, poke, collapse) is
-  unchanged in structure; contacts are still recomputed several times per
-  substep. It is bounded and brief, but it is where a profile points if a
-  poke ever stutters on a slow machine.
+- Awake physics now reuses solver storage and invariant normal effective
+  masses, but contact detection still runs several times per substep during
+  landings, pokes and collapses. It remains a useful profiling target if
+  interaction stutters on a slow machine.
 - The depth pre-pass and shadow map still re-render on about a third of
   settled frames (measured 35% over 70 s of a seeded fire at 1×): the brief
   shrink-settle wakes of logs (about half) and char fragments (the rest) move

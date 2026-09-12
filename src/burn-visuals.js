@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { random } from './textures.js';
 import { createLogSettling, updateLogSettling } from './log-settling.js';
 import { getFuelType } from './fuel-types.js';
-import { sampleLogSurface as sampleBurnSurface } from './log-combustion.js';
+import { sampleLogFlameBand } from './log-combustion.js';
 import { applyLogFracture, createCharFragments } from './log-damage.js';
 import { updateCoalBed } from './coal-bed.js';
 import { updateAshBed } from './ash-bed.js';
@@ -199,10 +199,10 @@ export function updateBurnVisuals(study, force = false) {
     for (let j = i; j < 12; j += 7) {
       const original = study.flameSources[j], along = j < 7 ? .50 : .28;
       root.copy(a).lerp(b, along);
-      const surfaceUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion.clone().invert());
-      const angle = Math.atan2(surfaceUp.z, surfaceUp.x);
-      const patch = log.surface ? sampleBurnSurface(log, along, angle) : null;
-      const strength = live ? (patch?.flame ?? log.visibleFlame ?? log.flame) * Math.min(1, type.heatOutput) : 0;
+      // Gas released underneath rises around the wood; a cool upper crust
+      // must not extinguish the plume coming from a burning lower face.
+      const bandFlame = log.surface ? sampleLogFlameBand(log, along) : (log.visibleFlame ?? log.flame);
+      const strength = live ? bandFlame * Math.min(1, type.heatOutput) : 0;
       const height = original.w * (.14 + .86 * Math.sqrt(strength)) * (.5 + .5 * Math.sqrt(Math.min(1, mass))) * Math.sqrt(type.heatOutput);
       const rootY = root.y + pose.radius * .45;
       fu.uSources.value[j].set(root.x, rootY, root.z, Math.min(height, 4.45 - rootY)); fu.uFuel.value[j] = strength;

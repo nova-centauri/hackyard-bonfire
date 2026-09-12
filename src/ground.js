@@ -27,9 +27,20 @@ export function seatOnGround(object, geometry, height = groundHeight, embed = .0
   return object;
 }
 
+// One set of uniforms lights the soil and its small surface details. This is
+// diffuse spill from the finite flame volume, complementing the shadowed point
+// light without another light, draw, shadow map or per-frame texture upload.
+export function createClearingLight() {
+  return {
+    uClearingPower: { value: new THREE.Vector2(1, 1) },
+    uClearingOrigin: { value: new THREE.Vector2() },
+    uClearingColor: { value: new THREE.Color('#ffc58e') },
+  };
+}
+
 // The shared world-space fade keeps ambient illumination off distant soil,
-// gravel and leaves so that the fire's small pool of light has no visible edge.
-export function clearingFalloff(material) {
+// gravel and leaves so that the fire's wider pool of light has no visible edge.
+export function clearingFalloff(material, light = null) {
   material.onBeforeCompile = shader => {
     shader.vertexShader = 'varying vec3 vClearingPosition;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -40,13 +51,33 @@ export function clearingFalloff(material) {
       vClearingPosition = (modelMatrix * clearingPosition).xyz;
     `);
     shader.fragmentShader = 'varying vec3 vClearingPosition;\n' + shader.fragmentShader;
+    if (light) {
+      Object.assign(shader.uniforms, light);
+      shader.fragmentShader = `uniform vec2 uClearingPower,uClearingOrigin;
+        uniform vec3 uClearingColor;
+      ` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+        vec2 clearingOffset = vClearingPosition.xz - uClearingOrigin;
+        float clearingDistance2 = dot(clearingOffset, clearingOffset);
+        float clearingDistance = sqrt(clearingDistance2);
+        // Flame reaches past the stones; low coals retain a much smaller pool.
+        float clearingFlame = uClearingPower.x * .9 / (1. + clearingDistance2 * .13);
+        float clearingCoal = uClearingPower.y * .16 * (1. - smoothstep(1.35, 4.8, clearingDistance)) / (1. + clearingDistance2 * .35);
+        float clearingSpill = (clearingFlame + clearingCoal) * (1. - smoothstep(5.6, 8.6, clearingDistance));
+        // Fixed mottling and the actual bumped normal preserve soil grain and
+        // pebble relief. Nothing in the dirt itself emits light.
+        clearingSpill *= .92 + .08 * sin(vClearingPosition.x * 1.7 + vClearingPosition.z * .9) * sin(vClearingPosition.z * 1.35 - vClearingPosition.x * .4);
+        clearingSpill *= .28 + .72 * max(0., dot(normal, (viewMatrix * vec4(0., 1., 0., 0.)).xyz));
+        reflectedLight.indirectDiffuse += diffuseColor.rgb * uClearingColor * clearingSpill;
+      `);
+    }
     shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
-      float firePool = 1. - smoothstep(2.9, 7.6, length(vClearingPosition.xz));
+      float firePool = 1. - smoothstep(3.3, 8.8, length(vClearingPosition.xz));
       outgoingLight *= firePool * firePool;
       #include <opaque_fragment>
     `);
   };
-  material.customProgramCacheKey = () => 'clearing-fire-falloff-v1';
+  material.customProgramCacheKey = () => `clearing-fire-falloff-v2${light ? '-spill' : ''}`;
   return material;
 }
 
@@ -82,10 +113,12 @@ export function addDirtClearing(parent, seed) {
     color.multiplyScalar(.97 + rand() * .06); colors.push(color.r, color.g, color.b);
   }
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3)); geometry.computeVertexNormals();
-  const soil = new THREE.Mesh(geometry, clearingFalloff(new THREE.MeshStandardMaterial({ map: texture, bumpMap: texture, bumpScale: .018, vertexColors: true, roughness: 1 })));
+  const clearingLight = createClearingLight();
+  const soil = new THREE.Mesh(geometry, clearingFalloff(new THREE.MeshStandardMaterial({ map: texture, bumpMap: texture, bumpScale: .018, vertexColors: true, roughness: 1 }), clearingLight));
+  soil.userData.clearingLight = clearingLight;
   soil.name = 'Hollowed earth'; soil.receiveShadow = true; parent.add(soil);
-  const gravel = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), clearingFalloff(new THREE.MeshStandardMaterial({ color: '#7b6d55', roughness: 1 })), 1000);
-  const leaves = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 5, 3), clearingFalloff(new THREE.MeshStandardMaterial({ color: '#756247', roughness: 1, flatShading: true })), 120);
+  const gravel = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), clearingFalloff(new THREE.MeshStandardMaterial({ color: '#7b6d55', roughness: 1 }), clearingLight), 1000);
+  const leaves = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 5, 3), clearingFalloff(new THREE.MeshStandardMaterial({ color: '#756247', roughness: 1, flatShading: true }), clearingLight), 120);
   const obj = new THREE.Object3D();
   for (let i = 0; i < 1000; i++) {
     const angle = rand() * Math.PI * 2, radius = 2.4 + Math.sqrt(rand()) * 5.7, size = .008 + rand() ** 3 * .083;

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BurnCycle } from '../src/lifecycle.js';
-import { copyCombustionPose, removeCharFromSurface, sampleLogSurface, surfaceExposure } from '../src/log-combustion.js';
+import { combustionEnvironment, copyCombustionPose, removeCharFromSurface, sampleLogFlameBand, sampleLogSurface, surfaceExposure, updateLogSurface } from '../src/log-combustion.js';
+import { getFuelType } from '../src/fuel-types.js';
+import { groundHeight } from '../src/ground.js';
 
 const poseAt = (x = 0, roll = 0) => ({ a: [x-1.4,.34,0], b: [x+1.4,.34,0], radius: .24,
   // Local +Y points along world +X; rolling swaps the two physical bark faces.
@@ -42,6 +44,83 @@ test('surface exposure distinguishes the core, projecting ends, and the undersid
   assert.ok(surfaceExposure(copyCombustionPose(poseAt(5)),.5,0).exposure < .0001);
 });
 
+const heatedSurface = (fuelType, height = .12) => {
+  const fuel = getFuelType(fuelType);
+  const log = { slot: 0, id: 1, fuelType, scale: 1, angle: 0, offset: 0, wood: .92, char: .08,
+    moisture: 0, temperature: .025, flame: 1, addedAt: 0, everLit: true };
+  // Broad board faces point down/up. A circular log shares the same basis.
+  const pose = copyCombustionPose({ a: [-1,height,0], b: [1,height,0], radius: .25 * fuel.radiusScale,
+    sectionX: [0,0,1], sectionZ: [0,-1,0], fuelType });
+  combustionEnvironment(log, pose);
+  log.temperature = .95;
+  for (let step = 0; step < 360; step++) updateLogSurface(log, .5, fuel, { consumed: 0, dry: 0, charBurn: 0, shed: 0, coreHeat: 1 });
+  return log;
+};
+
+test('logs resting in the excavated bowl heat and glow underneath while their crown stays sheltered', () => {
+  const log = heatedSurface('log', groundHeight(0,0) + .25);
+  const lower = sampleLogSurface(log,.5,Math.PI*.5), upper = sampleLogSurface(log,.5,Math.PI*1.5);
+  assert.ok(lower.exposure > upper.exposure * 6);
+  assert.ok(lower.temperature > .9 && upper.temperature < .4);
+  assert.ok(lower.glow > upper.glow * 8);
+  assert.ok(sampleLogFlameBand(log,.5) > .65, 'gas released below the wood still feeds a rising flame');
+});
+
+test('board exposure intersects flat faces and thin pallet pieces conduct heat through to their upper face', () => {
+  const fuelType = 'pallet', radius = .25 * getFuelType(fuelType).radiusScale;
+  const pose = copyCombustionPose({ a: [-1,.12,0], b: [1,.12,0], radius, fuelType,
+    sectionX: [0,0,1], sectionZ: [0,-1,0] });
+  const halfDepth = radius / Math.hypot(getFuelType(fuelType).aspect, 1);
+  near(surfaceExposure(pose,.5,Math.PI*.5).point[1],.12-halfDepth);
+  near(surfaceExposure(pose,.5,Math.PI*.25).point[1],.12-halfDepth);
+  near(surfaceExposure(pose,.5,Math.PI*1.5).point[1],.12+halfDepth);
+  const round = heatedSurface('log'), board = heatedSurface('plank'), thin = heatedSurface('pallet');
+  const top = log => sampleLogSurface(log,.5,Math.PI*1.5).temperature;
+  assert.ok(top(round) < .4 && top(board) < .6);
+  assert.ok(top(thin) > .75 && top(thin) > top(board) + .2);
+  for (const log of [round,board,thin]) {
+    near(mean(log.surface.patches,'wood'),log.wood);
+    near(mean(log.surface.patches,'char'),log.char);
+  }
+});
+
+test('bark variation is deterministic, differs between pieces, and stays attached when they roll', () => {
+  const first = liveLog(), same = liveLog();
+  const material = first.log.surface.patches.map(p=>p.reactivity);
+  assert.deepEqual(material,same.log.surface.patches.map(p=>p.reactivity));
+  assert.ok(Math.max(...material)-Math.min(...material) > .5);
+  const next = same.cycle.logs[1];
+  assert.notDeepEqual(material,next.surface.patches.map(p=>p.reactivity));
+  first.cycle.advance(60); first.cycle.setLogPoses([poseAt(0,Math.PI)]); first.cycle.advance(.5);
+  assert.deepEqual(material,first.log.surface.patches.map(p=>p.reactivity));
+});
+
+test('rising flame sampling is continuous along the wood and independent of its material roll', () => {
+  const { cycle,log } = liveLog(); cycle.advance(60);
+  const before = sampleLogFlameBand(log,.42);
+  near(sampleLogFlameBand(log,.42-1e-8),sampleLogFlameBand(log,.42+1e-8),1e-7);
+  // Rotate the material cells by half a turn without changing released gas.
+  for (let row=0;row<5;row++) {
+    const flames=log.surface.patches.slice(row*8,row*8+8).map(p=>p.flame);
+    for(let side=0;side<8;side++)log.surface.patches[row*8+side].flame=flames[(side+4)%8];
+  }
+  near(sampleLogFlameBand(log,.42),before);
+  assert.ok(before>0 && before<=1);
+});
+
+test('cached exposure responds to a mutable caller pose without rebasing material history', () => {
+  const { cycle,log } = liveLog(); cycle.advance(60);
+  const pose = copyCombustionPose(poseAt());
+  combustionEnvironment(log,pose);
+  const patches = log.surface.patches, history = patches.map(p=>[p.wood,p.char,p.temperature]);
+  const coupling = log.surface.bedCoupling;
+  pose.a[0] += 6; pose.b[0] += 6;
+  combustionEnvironment(log,pose);
+  assert.ok(log.surface.bedCoupling < coupling*.0001);
+  assert.deepEqual(patches.map(p=>[p.wood,p.char,p.temperature]),history);
+  assert.ok(patches.every(p=>p.position[0]>4));
+});
+
 test('a log chars locally along its length and around its circumference with conserved finite fuel', () => {
   const { cycle, log } = liveLog();
   for(let second=0;second<160;second++) {
@@ -57,6 +136,17 @@ test('a log chars locally along its length and around its circumference with con
   assert.ok(center.wood < top.wood-.08);
   assert.ok(center.char > end.char);
   assert.ok(center.glow > end.glow*2);
+});
+
+test('a hot charred underside keeps venting interior wood gas through two to five minutes of burning', () => {
+  const { cycle,log } = liveLog(); cycle.advance(120);
+  for(let time=120;time<=300;time+=30) {
+    const lower = sampleLogSurface(log,.5,0), upper = sampleLogSurface(log,.5,Math.PI);
+    assert.ok(log.flame>.8 && log.visibleFlame>log.flame*.25, `visible fire survives at ${time}s`);
+    assert.ok(lower.wood<.01 && lower.flame>log.flame*.3, 'a depleted surface cell still vents the burning interior');
+    assert.ok(upper.glow<.02 && upper.wood>log.wood+.1, 'rising gas does not paint embers onto the sheltered crown');
+    if(time<300)cycle.advance(30);
+  }
 });
 
 test('rolling changes the exposed face without rotating or resetting material heat and char', () => {

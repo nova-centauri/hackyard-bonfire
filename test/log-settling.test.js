@@ -159,16 +159,20 @@ test('stable fuel reuses depth and instance buffers while heat and flame uniform
   const buffers = [study.ashBed.geometry.attributes.position, study.coals.instanceMatrix, view.flakes.instanceMatrix,
     view.impactEmbers.geometry.attributes.position, view.impactEmbers.geometry.attributes.aSize];
   const versions = buffers.map(buffer => buffer.version);
+  const flameStrengths = new Set();
   for (let frame = 1; frame <= 15; frame++) {
     study.animationTime = frame / 30;
     study.cycle.logs[0].temperature = .3 + frame * .02;
     study.cycle.logs[0].flame = .4 + frame * .01;
     study.cycle.updateSummary();
     assert.equal(updateBurnVisuals(study), false, 'changing shader heat does not change scene depth');
+    flameStrengths.add(study.volumes[0].material.uniforms.uFuel.value[0]);
   }
   assert.deepEqual(buffers.map(buffer => buffer.version), versions);
   assert.equal(study.logMeshes[0].userData.burnUniforms.uHeat.value, .6);
-  assert.ok(Math.abs(study.volumes[0].material.uniforms.uFuel.value[0] - .55) < 1e-6);
+  assert.ok(flameStrengths.size > 10, 'surface gas keeps updating independently of cached geometry');
+  const flame = study.volumes[0].material.uniforms.uFuel.value[0];
+  assert.ok(flame > 0 && flame <= study.cycle.logs[0].flame);
   assert.equal(view.flakes.visible, false);
   assert.equal(view.impactEmbers.visible, false);
 });

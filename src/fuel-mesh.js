@@ -31,7 +31,7 @@ export function createSceneFuelMesh({ definition, fuelType = 'log', seed, mode, 
   const type = getFuelType(fuelType), a = new THREE.Vector3(...definition[0]), b = new THREE.Vector3(...definition[1]);
   const direction = b.clone().sub(a), length = direction.length() * type.lengthScale, radius = definition[2] * type.radiusScale;
   const burnUniforms = { uWood: { value: 1 }, uChar: { value: 0 }, uHeat: { value: 0 },
-    uBurnMap: { value: null }, uBurnSlot: { value: 0 }, uBurnLength: { value: length }, uBurnTime: { value: 0 },
+    uBurnMap: { value: null }, uBurnSlot: { value: 0 }, uBurnSeed: { value: (seed % 65521) / 97 }, uBurnLength: { value: length }, uBurnTime: { value: 0 },
     uLocalizedBurn: { value: 0 }, uAshPath: { value: type.ashPath ? 1 : 0 } };
   const paper = type.finish === 'paper';
   const look = type.look;
@@ -39,11 +39,11 @@ export function createSceneFuelMesh({ definition, fuelType = 'log', seed, mode, 
   const bark = look?.barkColor ? tinted(barkMat, look.barkColor) : barkMat;
   const endBase = look?.woodColor ? tinted(endMat, look.woodColor) : endMat;
   const exposedBase = look?.woodColor ? tinted(exposedMat, look.woodColor) : exposedMat;
-  const exposedMaterial = hybrid ? burningMaterial(exposedBase, burnUniforms, true) : exposedBase;
-  const sideMaterial = paper ? (hybrid ? burningMaterial(sheet, burnUniforms, true) : sheet)
+  const exposedMaterial = hybrid ? burningMaterial(exposedBase, burnUniforms, 'sawn') : exposedBase;
+  const sideMaterial = paper ? (hybrid ? burningMaterial(sheet, burnUniforms, 'sawn') : sheet)
     : isBoard(fuelType) ? exposedMaterial
     : hybrid ? burningMaterial(bark, burnUniforms) : bark;
-  const endMaterial = paper ? sideMaterial : hybrid ? burningMaterial(endBase, burnUniforms, true) : endBase;
+  const endMaterial = paper ? sideMaterial : hybrid ? burningMaterial(endBase, burnUniforms, 'end') : endBase;
   if (hybrid && sheet) sheet.dispose();
   if (hybrid && bark !== barkMat) bark.dispose();
   if (hybrid && endBase !== endMat) endBase.dispose();

@@ -122,8 +122,13 @@ function updateMass(pose, mass) {
   pose.inverseInertia.clampScalar(0, 3500);
 }
 
-function inverseInertia(pose, vector) {
-  return vector.clone().applyQuaternion(pose.quaternion.clone().invert()).multiply(pose.inverseInertia).applyQuaternion(pose.quaternion);
+// The contact solver runs twelve iterations per substep. Its temporary vectors
+// never escape an operation; reusing them avoids thousands of short-lived
+// vectors and quaternions whenever logs land, roll or shed charcoal.
+const inertiaRotation = new THREE.Quaternion(), inertiaVector = new THREE.Vector3();
+function inverseInertia(pose, vector, target) {
+  return target.copy(vector).applyQuaternion(inertiaRotation.copy(pose.quaternion).invert())
+    .multiply(pose.inverseInertia).applyQuaternion(pose.quaternion);
 }
 
 function wake(pose) { pose.sleeping = false; pose.quietTime = 0; pose.shrinkSinceWake = 0; pose.shrinkWake = false; }
@@ -440,20 +445,24 @@ function allContacts(bodies, height, stones = []) {
   return contacts;
 }
 
-function pointVelocity(pose, arm) { return pose ? pose.angularVelocity.clone().cross(arm).add(pose.linearVelocity) : new THREE.Vector3(); }
+const velocityA = new THREE.Vector3(), velocityB = new THREE.Vector3();
+const solveForce = new THREE.Vector3(), solvePrevious = new THREE.Vector3(), solveDelta = new THREE.Vector3(), solveSpin = new THREE.Vector3();
+function pointVelocity(pose, arm, target) { return pose ? target.copy(pose.angularVelocity).cross(arm).add(pose.linearVelocity) : target.set(0, 0, 0); }
 // A sleeping body is static for the solver. Whether a touch is strong enough to
 // wake it is decided after the solve, from the visitor's remaining motion.
 function effectiveMass(pose, arm, n) {
   if (!pose || pose.sleeping) return 0;
-  return pose.inverseMass + inverseInertia(pose, arm.clone().cross(n)).cross(arm).dot(n);
+  inertiaVector.copy(arm).cross(n);
+  return pose.inverseMass + inverseInertia(pose, inertiaVector, inertiaVector).cross(arm).dot(n);
 }
 function impulse(pose, arm, impulseVector) {
   if (!pose || pose.sleeping) return;
   pose.linearVelocity.addScaledVector(impulseVector, pose.inverseMass);
-  pose.angularVelocity.add(inverseInertia(pose, arm.clone().cross(impulseVector)));
+  inertiaVector.copy(arm).cross(impulseVector);
+  pose.angularVelocity.add(inverseInertia(pose, inertiaVector, inertiaVector));
 }
-function angularMass(pose, axis) { return !pose || pose.sleeping ? 0 : inverseInertia(pose, axis).dot(axis); }
-function angularImpulse(pose, vector) { if (pose && !pose.sleeping) pose.angularVelocity.add(inverseInertia(pose, vector)); }
+function angularMass(pose, axis) { return !pose || pose.sleeping ? 0 : inverseInertia(pose, axis, inertiaVector).dot(axis); }
+function angularImpulse(pose, vector) { if (pose && !pose.sleeping) pose.angularVelocity.add(inverseInertia(pose, vector, inertiaVector)); }
 
 function prepareContacts(contacts, time, state, dt) {
   for (const contact of contacts) {
@@ -466,7 +475,7 @@ function prepareContacts(contacts, time, state, dt) {
     const sleeper = a.sleeping ? a : b?.sleeping ? b : null;
     contact.constraints = contact.points.map(point => {
       const ra = point.clone().sub(a.position), rb = b ? point.clone().sub(b.position) : new THREE.Vector3();
-      const speed = pointVelocity(a, ra).sub(pointVelocity(b, rb)).dot(normal);
+      const speed = pointVelocity(a, ra, velocityA).sub(pointVelocity(b, rb, velocityB)).dot(normal);
       if (sleeper && (speed < -WAKE_APPROACH || depth > WAKE_DEPTH)) wake(sleeper);
       // An impact belongs to the arriving/moving body; opposite support impulses
       // should not create duplicate spark/audio events on a quiet bottom log.
@@ -482,43 +491,47 @@ function prepareContacts(contacts, time, state, dt) {
 }
 
 function solveVelocity(contacts) {
+  // All contact-triggered wakes have happened now. Poses and lever arms stay
+  // fixed throughout the velocity iterations, so the normal mass is constant.
+  for (const { a, b, normal, constraints } of contacts)
+    for (const c of constraints) c.normalMass = effectiveMass(a, c.ra, normal) + effectiveMass(b, c.rb, normal);
   for (let pass = 0; pass < 12; pass++) for (const contact of contacts) {
     const { a, b, normal } = contact;
     if (a.sleeping && (!b || b.sleeping)) continue;
     for (const c of contact.constraints) {
-      let relative = pointVelocity(a, c.ra).sub(pointVelocity(b, c.rb));
-      const mass = effectiveMass(a, c.ra, normal) + effectiveMass(b, c.rb, normal);
+      let relative = pointVelocity(a, c.ra, velocityA).sub(pointVelocity(b, c.rb, velocityB));
+      const mass = c.normalMass;
       const before = c.normalImpulse;
       c.normalImpulse = Math.max(0, before + (c.bounce - relative.dot(normal)) / mass);
       const normalDelta = c.normalImpulse - before;
-      const force = normal.clone().multiplyScalar(normalDelta);
+      const force = solveForce.copy(normal).multiplyScalar(normalDelta);
       impulse(a, c.ra, force); if (b) impulse(b, c.rb, force.negate());
-      relative = pointVelocity(a, c.ra).sub(pointVelocity(b, c.rb));
+      relative = pointVelocity(a, c.ra, velocityA).sub(pointVelocity(b, c.rb, velocityB));
       const tangent = relative.addScaledVector(normal, -relative.dot(normal));
       const speed = tangent.length();
       if (speed < 1e-8) continue;
       tangent.divideScalar(speed);
       const frictionMass = effectiveMass(a, c.ra, tangent) + effectiveMass(b, c.rb, tangent);
-      const old = c.tangentImpulse.clone();
+      const old = solvePrevious.copy(c.tangentImpulse);
       c.tangentImpulse.addScaledVector(tangent, -speed / frictionMass);
       const friction = b ? .58 : .72, limit = friction * c.normalImpulse;
       if (c.tangentImpulse.length() > limit) c.tangentImpulse.setLength(limit);
-      const frictionDelta = c.tangentImpulse.clone().sub(old);
+      const frictionDelta = solveDelta.copy(c.tangentImpulse).sub(old);
       impulse(a, c.ra, frictionDelta); if (b) impulse(b, c.rb, frictionDelta.negate());
       // Rolling resistance: oppose the relative spin about the contact plane
       // with an angular impulse no larger than the normal impulse times the
       // resistance lever, accumulated and clamped exactly like friction.
-      const spin = a.angularVelocity.clone(); if (b) spin.sub(b.angularVelocity);
+      const spin = solveSpin.copy(a.angularVelocity); if (b) spin.sub(b.angularVelocity);
       spin.addScaledVector(normal, -spin.dot(normal));
       const spinSpeed = spin.length();
       if (spinSpeed < 1e-9) continue;
       const axis = spin.divideScalar(spinSpeed), rollMass = angularMass(a, axis) + angularMass(b, axis);
       if (rollMass <= 0) continue;
-      const previousRoll = c.rollImpulse.clone();
+      const previousRoll = solvePrevious.copy(c.rollImpulse);
       c.rollImpulse.addScaledVector(axis, -spinSpeed / rollMass);
       const rollLimit = ROLLING_RESISTANCE_LENGTH * c.normalImpulse;
       if (c.rollImpulse.length() > rollLimit) c.rollImpulse.setLength(rollLimit);
-      const rollDelta = c.rollImpulse.clone().sub(previousRoll);
+      const rollDelta = solveDelta.copy(c.rollImpulse).sub(previousRoll);
       angularImpulse(a, rollDelta); if (b) angularImpulse(b, rollDelta.negate());
     }
   }

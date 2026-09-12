@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Ember trail GPU lifetime check</title>
+<style>body{margin:2rem;background:#171717;color:#eee;font:15px/1.5 monospace}pre{white-space:pre-wrap}canvas{display:none}.pass{color:#9fd899}.fail{color:#ff9696}</style>
+<h1>Ember trail GPU lifetime check</h1>
+<p id="status">Compiling the real ember trail vertex shader…</p>
+<pre id="report"></pre>
+<canvas id="gpu" width="1" height="1"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { createEmbers } from '../../src/embers.js';
+
+const status = document.querySelector('#status'), report = document.querySelector('#report');
+try {
+  const gl = document.querySelector('#gpu').getContext('webgl2');
+  if (!gl) throw new Error('WebGL2 unavailable');
+  const embers = createEmbers({ seed: 22, count: 1, trails: 1,
+    sources: Array.from({ length: 12 }, () => new THREE.Vector4(0, .2, 0, 2)), fuel: Array(12).fill(1) });
+  const realShader = embers.streaks.material.vertexShader;
+  // Restore the previous wrap-before-sampling behavior as a negative control.
+  // Its tail used time - .055 before fract(), crossing into the prior life.
+  const previousShader = realShader.replace(
+    'age=max(0.,fract(seed.x+time/life)-trailDelay/life);',
+    'age=fract(seed.x+(time-trailDelay)/life);');
+  if (previousShader === realShader) throw new Error('Negative control could not locate the age formula');
+
+  function compile(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source); gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
+    return shader;
+  }
+  function programFor(source) {
+    // Three normally supplies these GLSL3 aliases and matrix uniforms. Keep all
+    // simulation code unchanged and capture its actual final position/alpha.
+    const vertex = `#version 300 es
+      precision highp float;
+      precision highp int;
+      #define attribute in
+      #define varying out
+      uniform mat4 modelViewMatrix,projectionMatrix;
+      out vec3 tfPosition;out float tfAlpha;
+    ` + source.replace(/}\s*$/, 'tfPosition=gl_Position.xyz;tfAlpha=vAlpha;\n}');
+    const fragment = `#version 300 es
+      precision highp float;
+      out vec4 color;
+      void main(){color=vec4(1.);}`;
+    const program = gl.createProgram();
+    const vs = compile(gl.VERTEX_SHADER, vertex), fs = compile(gl.FRAGMENT_SHADER, fragment);
+    gl.attachShader(program, vs); gl.attachShader(program, fs);
+    gl.transformFeedbackVaryings(program, ['tfPosition', 'tfAlpha'], gl.INTERLEAVED_ATTRIBS);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+    gl.deleteShader(vs); gl.deleteShader(fs);
+    return program;
+  }
+  const identity = new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+  const sources = new Float32Array(12 * 4);
+  for (let i = 0; i < 12; i++) sources.set([0, .2, 0, 2], i * 4);
+  const seed = Array.from(embers.streaks.geometry.attributes.aSeed.array.slice(0, 4));
+  const life = 2.4 + seed[2] * 2.6, birth = (1 - seed[0]) * life;
+  const times = [['birth', birth], ['just after birth', birth + .008], ['tail still growing', birth + .025],
+    ['mid life', birth + life * .5], ['just before recycle', birth + life - .008],
+    ['recycle', birth + life], ['just after recycle', birth + life + .008]];
+
+  function capture(shaderSource) {
+    const program = programFor(shaderSource), vao = gl.createVertexArray(), buffers = [];
+    gl.useProgram(program); gl.bindVertexArray(vao);
+    for (const name of ['aSeed', 'aSource', 'aTrail']) {
+      const attribute = embers.streaks.geometry.attributes[name], index = gl.getAttribLocation(program, name);
+      if (index < 0) continue;
+      const buffer = gl.createBuffer(); buffers.push(buffer);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer); gl.bufferData(gl.ARRAY_BUFFER, attribute.array, gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(index); gl.vertexAttribPointer(index, attribute.itemSize, gl.FLOAT, false, 0, 0);
+    }
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'modelViewMatrix'), false, identity);
+    gl.uniformMatrix4fv(gl.getUniformLocation(program, 'projectionMatrix'), false, identity);
+    gl.uniform4fv(gl.getUniformLocation(program, 'uSources[0]'), sources);
+    gl.uniform1fv(gl.getUniformLocation(program, 'uFuel[0]'), new Float32Array(12).fill(1));
+    for (const [name, value] of Object.entries({ uPower: 1, uCoalHeat: 1, uDensity: 1, uImpact: 0, uPixelScale: 600 }))
+      gl.uniform1f(gl.getUniformLocation(program, name), value);
+    gl.uniform3f(gl.getUniformLocation(program, 'uWind'), .15, 0, -.07);
+    const feedback = gl.createTransformFeedback(), output = gl.createBuffer();
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback);
+    gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, output); gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, 8 * 4, gl.STREAM_READ);
+    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, output);
+    gl.enable(gl.RASTERIZER_DISCARD);
+    const results = times.map(([label, time]) => {
+      gl.uniform1f(gl.getUniformLocation(program, 'uTime'), time);
+      gl.beginTransformFeedback(gl.POINTS); gl.drawArrays(gl.POINTS, 0, 2); gl.endTransformFeedback();
+      const values = new Float32Array(8); gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, values);
+      if (gl.getError() !== gl.NO_ERROR) throw new Error('Transform feedback GL error');
+      const head = Array.from(values.slice(0, 3)), tail = Array.from(values.slice(4, 7));
+      const length = Math.hypot(...head.map((value, i) => value - tail[i]));
+      return { label, time, head, tail, headAlpha: values[3], tailAlpha: values[7], length,
+        finite: values.every(Number.isFinite), short: length < .3, behind: tail[1] <= head[1] + 1e-5 };
+    });
+    gl.disable(gl.RASTERIZER_DISCARD); gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
+    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+    gl.deleteTransformFeedback(feedback); gl.deleteBuffer(output);
+    for (const buffer of buffers) gl.deleteBuffer(buffer);
+    gl.deleteVertexArray(vao); gl.deleteProgram(program);
+    return results;
+  }
+  const current = capture(realShader), previous = capture(previousShader);
+  const fixedPassed = current.every(sample => sample.finite && sample.short && sample.behind);
+  const oldFailure = previous.some(sample => !sample.short || !sample.behind);
+  const passed = fixedPassed && oldFailure;
+  const result = { passed, fixedPassed, oldFailure, sourceHeight: 2, seed, life, birth,
+    maxCurrentLength: Math.max(...current.map(sample => sample.length)),
+    maxPreviousLength: Math.max(...previous.map(sample => sample.length)), current, previous };
+  document.documentElement.dataset.ready = 'true'; document.documentElement.dataset.passed = String(passed);
+  status.textContent = passed ? 'PASS — real GPU output stays within one lifetime; prior formula fails the same fixture.' : 'FAIL — inspect GPU captures below.';
+  status.className = passed ? 'pass' : 'fail'; report.textContent = JSON.stringify(result, null, 2);
+  embers.dispose();
+} catch (error) {
+  document.documentElement.dataset.ready = 'true'; document.documentElement.dataset.passed = 'false';
+  status.textContent = 'FAIL — ' + error.message; status.className = 'fail'; report.textContent = error.stack;
+}
+</script>
+</html>

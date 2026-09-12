@@ -51,6 +51,10 @@ on VPS-01 via the webhook-pull described under [Deploy](#deploy).
   occasional dip as a flame sheet tears away; the main light follows the
   centre of the flames so the shadows on the stones lean with the fire, and
   it reddens as flames die to embers.
+- **The clearing catches the glow.** Warm light reaches beyond the stones,
+  revealing dirt, gravel and leaves, then contracts as the fire fades. Logs
+  char unevenly on the lower, fire-facing sides; thin boards can glow through
+  to the top while thick wood keeps a cooler crown.
 - **Heat haze and vignette.** Hot air above the flames refracts what is
   behind it; a soft vignette deepens in focus mode.
 - **Logs settle.** As wood thins it sinks onto its support continuously.

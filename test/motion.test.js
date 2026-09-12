@@ -6,6 +6,7 @@ import { createHybridFire } from '../src/hybrid-fire.js';
 import { createEmbers } from '../src/embers.js';
 import { createSteam } from '../src/steam.js';
 import { createWeather } from '../src/weather.js';
+import { createClearingLight } from '../src/ground.js';
 
 function motionStudy() {
   const layers = { flames: new THREE.Group(), smoke: new THREE.Group(), sparks: new THREE.Group(), steam: new THREE.Group() };
@@ -20,8 +21,9 @@ function motionStudy() {
   Object.assign(coalMaterial.userData, { bedAsh: { value: 0 }, time: { value: 0 }, heat: { value: 1 }, impact: { value: 0 } });
   const cycle = { flame: 2.6, coalHeat: .7, coalMass: .4, ashMass: .1, time: 30, logs: Array.from({ length: 7 }, (_, i) => ({ phase: i < 3 ? 'burning' : 'queued', moisture: i === 1 ? .2 : .02, temperature: .8 })) };
   const study = { animationTime: 0, volumes: [fire], layers, cycle, flameCentroid: new THREE.Vector3(), flameHeight: 0, weather: createWeather(22) };
-  study.motion = createMotionState(layers, { embers, steam, lights: [light, core], coalMaterial, barkMaterial });
-  return { study, fire, embers, steam, light, core };
+  const clearingLight = createClearingLight();
+  study.motion = createMotionState(layers, { embers, steam, lights: [light, core], coalMaterial, barkMaterial, clearingLight });
+  return { study, fire, embers, steam, light, core, clearingLight };
 }
 
 test('wind reaches the fire, smoke and embers, and the firelight follows the flames', () => {
@@ -98,4 +100,37 @@ test('firelight stays in the flame volume and never inside a log', () => {
   assert.ok(light.position.y > .57 && light.position.y < 1.45);
   assert.ok(Math.hypot(core.position.x, core.position.z) < .5);
   assert.ok(core.position.y < .4, 'the coal light stays in the bed');
+});
+
+test('surrounding soil follows the flame flicker and falls back to red coal light', () => {
+  const { study, light, clearingLight: u } = motionStudy();
+  study.animationTime = 10; updateStudyMotion(study);
+  assert.ok(u.uClearingPower.value.x > .6 && u.uClearingPower.value.y > .6);
+  assert.deepEqual(u.uClearingOrigin.value.toArray(), [light.position.x, light.position.z]);
+  const first = u.uClearingPower.value.x, warm = u.uClearingColor.value.clone();
+  const previousCycle = JSON.stringify(study.cycle);
+  study.animationTime = 10.5; updateStudyMotion(study);
+  assert.notEqual(u.uClearingPower.value.x, first, 'the whole clearing breathes with the fire');
+  assert.equal(JSON.stringify(study.cycle), previousCycle, 'light never feeds animation time into combustion');
+  study.cycle.flame = 0; updateStudyMotion(study);
+  assert.equal(u.uClearingPower.value.x, 0, 'the broad flame spill ends with the flame');
+  assert.ok(u.uClearingPower.value.y > .6, 'a hot bed keeps the narrow coal pool');
+  assert.ok(u.uClearingColor.value.g < warm.g, 'coal light is redder');
+});
+
+test('an exhausted or cold coal bed cannot leave a lit clearing', () => {
+  const { study, light, core, clearingLight: u } = motionStudy();
+  study.cycle.flame = 0; study.animationTime = 20; updateStudyMotion(study);
+  const fullBed = u.uClearingPower.value.y;
+  study.cycle.coalMass = .014; updateStudyMotion(study);
+  assert.ok(u.uClearingPower.value.y > 0 && u.uClearingPower.value.y < fullBed * .04, 'a few hot fragments contribute little light');
+  study.cycle.coalMass = 0; study.cycle.coalHeat = .95; updateStudyMotion(study);
+  assert.deepEqual(u.uClearingPower.value.toArray(), [0, 0]);
+  assert.equal(light.intensity, 0); assert.equal(core.intensity, 0);
+  study.cycle.coalMass = .4; study.cycle.coalHeat = 0; updateStudyMotion(study);
+  assert.deepEqual(u.uClearingPower.value.toArray(), [0, 0]);
+  assert.equal(light.intensity, 0); assert.equal(core.intensity, 0);
+  study.cycle.flame = 2.6; updateStudyMotion(study);
+  assert.ok(u.uClearingPower.value.x > .6 && light.intensity > 0, 'fresh flame can light the clearing before coals have formed');
+  assert.equal(u.uClearingPower.value.y, 0);
 });

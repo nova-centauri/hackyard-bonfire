@@ -5,16 +5,16 @@ import { flicker, smoothNoise } from './weather.js';
 // Embers and steam are computed on the GPU from time, so this only forwards
 // the slow-changing state they depend on (fire power, heat, per-log steam),
 // drives the wind, and moves and flickers the firelight.
-const WARM = new THREE.Color('#ff9a43'), EMBER_LIGHT = new THREE.Color('#ff6a1e');
+const WARM = new THREE.Color('#ff9a43'), EMBER_LIGHT = new THREE.Color('#ff6a1e'), SOIL_WARM = new THREE.Color('#ffc58e');
 
-export function createMotionState(layers, { embers, steam, twigInstances, lights, coalMaterial, barkMaterial }) {
+export function createMotionState(layers, { embers, steam, twigInstances, lights, coalMaterial, barkMaterial, clearingLight }) {
   const uniforms = new Set();
   for (const group of Object.values(layers)) group.traverse(object => {
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     for (const material of materials) if (material?.uniforms?.uTime) uniforms.add(material.uniforms.uTime);
   });
   return {
-    uniforms: [...uniforms], embers, steam, twigInstances,
+    uniforms: [...uniforms], embers, steam, twigInstances, clearingLight,
     lights: lights.map(light => ({ light, intensity: light.intensity, home: light.position.clone() })),
     coalMaterial, coalEmission: coalMaterial.emissiveIntensity,
     barkMaterial, barkEmission: barkMaterial.emissiveIntensity,
@@ -72,6 +72,8 @@ export function updateStudyMotion(study) {
   const cycle = study.cycle;
   const firePower = cycle ? Math.min(1, cycle.flame / 3.2) : 1;
   const coalHeat = cycle ? cycle.coalHeat : 1;
+  // A trace of hot ash cannot light an empty clearing like a full coal bed.
+  const coalLightPower = cycle ? coalHeat * THREE.MathUtils.smoothstep(cycle.coalMass || 0, 0, .14) : 1;
   const impact = study.burnVisuals?.impactPulse || 0;
   const weather = study.weather?.update(time), wind = weather?.wind, gust = weather?.gust || 0;
   for (const volume of study.volumes) {
@@ -96,12 +98,14 @@ export function updateStudyMotion(study) {
   // for a moment, gusts deepen it all, and the main light follows the flames'
   // centre so the shadows on the stones lean with the fire.
   const { lively, dip } = firelightMood(time);
+  let clearingFlicker = 1;
   motion.lights.forEach(({ light, intensity, home }, index) => {
     const noise = flicker(time * (index ? 1.35 : 1), index * 17);
     const amplitude = index === 0 ? .2 + lively * .18 + gust * .22 : .12 + lively * .07;
     const level = (1 + (noise - .5) * 2 * amplitude + impact * .28) * (1 - dip * (index === 0 ? .18 : .1));
+    if (index === 0) clearingFlicker = Math.max(0, 1 + (level - 1) * .6);
     // Coals keep a warm pool when the gas dips, so the pit stays readable.
-    const power = index === 0 ? Math.max(firePower, coalHeat * .16) : coalHeat;
+    const power = index === 0 ? Math.max(firePower, coalLightPower * .16) : coalLightPower;
     light.intensity = intensity * Math.max(0, level) * power;
     if (index === 0 && study.flameCentroid) {
       const target = motion.lightTarget.copy(study.flameCentroid);
@@ -120,6 +124,13 @@ export function updateStudyMotion(study) {
       light.position.y += (.14 + coalHeat * .1 - light.position.y) * mix;
     }
   });
+  if (motion.clearingLight) {
+    const u = motion.clearingLight;
+    u.uClearingPower.value.set(firePower * clearingFlicker, coalLightPower * (1 + (flicker(time * .45, 9) - .5) * .12));
+    u.uClearingColor.value.copy(EMBER_LIGHT).lerp(SOIL_WARM, Math.min(1, firePower * 1.6));
+    const origin = motion.lights[0]?.light.position || study.flameCentroid;
+    if (origin) u.uClearingOrigin.value.set(origin.x, origin.z);
+  }
   motion.coalMaterial.emissiveIntensity = motion.coalEmission;
   if (motion.coalMaterial.userData.time) {
     motion.coalMaterial.userData.time.value = time;

@@ -38,14 +38,14 @@ export function copyCombustionPose(pose) {
     if (n < 1e-7) { q.x = 1; q.w = 0; } else for (const k of ['x','y','z','w']) q[k] /= n;
     x = rotate([1,0,0], q); z = rotate([0,0,1], q);
   }
-  return { a, b, x, z, radius: pose.radius, id: pose.id };
+  return { a, b, x, z, radius: pose.radius, id: pose.id, fuelType: pose.fuelType };
 }
 
 export function fallbackCombustionPose(log) {
   const [aa, bb, radius] = definitions[log.slot % definitions.length], fuel = getFuelType(log.fuelType);
   const center = aa.map((v, i) => (v + bb[i]) / 2), half = bb.map((v, i) => (v - aa[i]) * fuel.lengthScale * log.scale / 2);
   const spin = p => [p[0] * Math.cos(log.angle) + p[2] * Math.sin(log.angle) + log.offset, p[1], p[2] * Math.cos(log.angle) - p[0] * Math.sin(log.angle)];
-  return copyCombustionPose({ a: spin(center.map((v,i) => v - half[i])), b: spin(center.map((v,i) => v + half[i])), radius: radius * fuel.radiusScale * log.scale });
+  return copyCombustionPose({ a: spin(center.map((v,i) => v - half[i])), b: spin(center.map((v,i) => v + half[i])), radius: radius * fuel.radiusScale * log.scale, fuelType: log.fuelType });
 }
 
 function remember(log) {
@@ -57,14 +57,20 @@ export function ensureLogSurface(log) {
   // Rebase only an external reservoir edit, never an ordinary pose change.
   const old = log.surface?.bulk;
   if (!old || [log.wood,log.char,log.moisture,log.temperature,log.flame].some((v,i) => Math.abs(v-old[i]) > 1e-8)) {
-    log.surface = { axial: SURFACE_AXIAL, radial: SURFACE_RADIAL, patches: Array.from({ length: COUNT }, (_, i) => ({
-      along: (Math.floor(i / SURFACE_RADIAL) + .5) / SURFACE_AXIAL, angle: i % SURFACE_RADIAL * TAU / SURFACE_RADIAL,
-      wood: log.wood, char: log.char, moisture: log.moisture, temperature: log.temperature,
-      burn: 1 - log.wood, exposure: 0, flame: log.flame, glow: 0,
-    })) };
+    const phase = (log.id ?? log.slot + 1) * 2.399963 + (log.scale ?? 1) * 19.7;
+    log.surface = { axial: SURFACE_AXIAL, radial: SURFACE_RADIAL, patches: Array.from({ length: COUNT }, (_, i) => {
+      const along = (Math.floor(i / SURFACE_RADIAL) + .5) / SURFACE_AXIAL, angle = i % SURFACE_RADIAL * TAU / SURFACE_RADIAL;
+      // Uneven bark density and checks follow this piece of wood through rolls.
+      // Coherent variation avoids a uniform advancing band without introducing
+      // frame noise or consuming the lifecycle's seeded random stream.
+      const reactivity = 1 + .24 * Math.sin(angle * 3 + along * 7 + phase)
+        + .18 * Math.sin(angle * 2 - along * 13 + phase * 1.7);
+      return { along, angle, reactivity, wood: log.wood, char: log.char, moisture: log.moisture, temperature: log.temperature,
+        burn: 1 - log.wood, exposure: 0, flame: log.flame, glow: 0 };
+    }), temperatures: new Float64Array(COUNT) };
     if (log.addedAt < 0 && log.everLit) {
       const pose = fallbackCombustionPose(log), patches = log.surface.patches;
-      const weights = patches.map(p => .025 + surfaceExposure(pose,p.along,p.angle).exposure ** 2);
+      const weights = patches.map(p => .006 + surfaceExposure(pose,p.along,p.angle).exposure ** 2 * p.reactivity);
       const total = weights.reduce((a,b) => a+b,0);
       for (let i=0;i<COUNT;i++) {
         const patch = patches[i];
@@ -80,24 +86,55 @@ export function ensureLogSurface(log) {
   return log.surface;
 }
 
-// A low diffuse bed plus a directional radiative core heats the inward-facing
-// bark most. Axial distance and height matter independently of the slot index.
-export function surfaceExposure(pose, along, angle) {
+// The lower, inward-facing surface receives direct radiation from the coal
+// bed. Diffuse heat alone warms the protected crown much more slowly. Keep the
+// reservoir's historical coupling separate: a surface detail must not change
+// ignition thresholds or the calibrated rate at which a tended fire uses fuel.
+export function surfaceExposure(pose, along, angle, fuel = getFuelType(pose.fuelType)) {
   const cs = Math.cos(angle), sn = Math.sin(angle);
-  const normal = pose.x.map((v,i) => v * cs + pose.z[i] * sn);
-  const point = pose.a.map((v,i) => v + (pose.b[i] - v) * along + normal[i] * pose.radius);
-  const [x,y,z] = point, d = Math.hypot(x, y - .055, z) || .001;
-  const facing = clamp((-normal[0] * x + normal[1] * (.055-y) - normal[2] * z) / d);
+  const radial = pose.x.map((v,i) => v * cs + pose.z[i] * sn);
+  const center = pose.a.map((v,i) => v + (pose.b[i] - v) * along);
+  const legacy = center.map((v,i) => v + radial[i] * pose.radius);
+  const legacyDistance = Math.hypot(legacy[0], legacy[1] - .055, legacy[2]) || .001;
+  const legacyFacing = clamp((-radial[0] * legacy[0] + radial[1] * (.055-legacy[1]) - radial[2] * legacy[2]) / legacyDistance);
+  const bedExposure = clamp(Math.exp(-(legacy[0]**2+legacy[2]**2)/1.65) * Math.exp(-Math.max(0,legacy[1]-.2)/1.7) * (.58 + .62 * legacyFacing), 0, 1.2);
+  let radius = pose.radius, normal = radial;
+  if (fuel.shape === 'board') {
+    // The atlas still uses atan2(z,x), but those rays hit flat board faces,
+    // not the enclosing cylinder. Broad faces share a normal and thin sheets
+    // have a much shorter path for heat to reach their opposite face.
+    const halfDepth = radius / Math.hypot(fuel.aspect, 1), halfWidth = halfDepth * fuel.aspect;
+    const toX = halfWidth / Math.max(1e-9, Math.abs(cs)), toZ = halfDepth / Math.max(1e-9, Math.abs(sn));
+    radius = Math.min(toX, toZ);
+    normal = (toX < toZ ? pose.x : pose.z).map(v => v * Math.sign(toX < toZ ? cs : sn));
+  }
+  const point = center.map((v,i) => v + radial[i] * radius);
+  const [x,y,z] = point, d = Math.hypot(x, y + .18, z) || .001;
+  // The dirt bowl and coals sit below world zero. Radiation also comes from
+  // the bed under the piece, not only one point that could fall inside a low
+  // log and incorrectly leave its whole underside sheltered from the heat.
+  const facing = Math.max(clamp((-normal[0] * x + normal[1] * (-.18-y) - normal[2] * z) / d), clamp(-normal[1]) * .72 * Math.exp(-(x*x+z*z)/.75));
   const plume = Math.exp(-(x*x+z*z)/1.65) * Math.exp(-Math.max(0,y-.2)/1.7);
-  return { point, exposure: clamp(plume * (.58 + .62 * facing), 0, 1.2) };
+  return { point, thickness: radius * 2, exposure: clamp(plume * (.11 + 1.1 * facing ** .8), 0, 1.2), bedExposure };
 }
 
 export function combustionEnvironment(log, pose) {
-  const surface = ensureLogSurface(log), actual = pose || fallbackCombustionPose(log);
-  let exposure = 0;
+  const surface = ensureLogSurface(log), previous = surface.environment;
+  // The lifecycle receives detached pose snapshots once per rendered frame.
+  // Accelerated burn steps can reuse their geometric exposure; thermal state
+  // still advances on every fixed step. Standalone poses change only when
+  // placement/fuel properties change.
+  const transform = pose ? [...pose.a, ...pose.b, ...pose.x, ...pose.z, pose.radius] : null;
+  if (previous && previous.pose === pose && previous.fuelType === log.fuelType
+    && (pose ? previous.transform.every((v,i) => v === transform[i])
+      : previous.scale === log.scale && previous.angle === log.angle && previous.offset === log.offset && previous.slot === log.slot)) return surface;
+  const actual = pose || fallbackCombustionPose(log);
+  const fuel = getFuelType(log.fuelType);
+  let exposure = 0, bedExposure = 0;
   for (const patch of surface.patches) {
-    const sample = surfaceExposure(actual, patch.along, patch.angle);
-    patch.exposure = sample.exposure; patch.position = sample.point; exposure += sample.exposure;
+    const sample = surfaceExposure(actual, patch.along, patch.angle, fuel);
+    patch.exposure = sample.exposure; patch.position = sample.point; patch.thickness = sample.thickness;
+    exposure += sample.exposure; bedExposure += sample.bedExposure;
   }
   // The reservoir calibration assumes a crossed log in the coal bed. Preserve
   // that calibration in standalone cycles; live geometry reduces it as fuel
@@ -109,8 +146,9 @@ export function combustionEnvironment(log, pose) {
   // fresh wood on a cooling bed too marginal to catch and the tended fire
   // went out within a couple of hours at every burn speed.
   surface.exposure = exposure / COUNT;
-  surface.bedCoupling = pose ? clamp(surface.exposure / .39, 0, 1.12) : 1;
+  surface.bedCoupling = pose ? clamp(bedExposure / COUNT / .39, 0, 1.12) : 1;
   surface.pose = actual;
+  surface.environment = { pose, transform, fuelType: log.fuelType, scale: log.scale, angle: log.angle, offset: log.offset, slot: log.slot };
   return surface;
 }
 
@@ -142,14 +180,25 @@ function remove(patches, field, amount, weights, onRemove) {
 
 export function updateLogSurface(log, dt, fuel, { consumed, dry, charBurn, shed, coreHeat }) {
   const surface = log.surface, patches = surface.patches, thermal = [], oxidation = [];
-  for (const patch of patches) {
+  for (let i = 0; i < COUNT; i++) surface.temperatures[i] = patches[i].temperature;
+  for (let i = 0; i < COUNT; i++) {
+    const patch = patches[i];
     // Internal conduction provides slow background heat. The exposed side heats
     // first; a roll changes exposure immediately but cannot teleport old heat.
-    const relative = clamp(patch.exposure / Math.max(.12, surface.exposure), 0, 2);
-    const target = clamp(log.temperature * (.16 + .84 * relative ** 1.3));
-    patch.temperature += (target - patch.temperature) * (1 - Math.exp(-dt * fuel.heatRate / (patch.moisture > .06 ? 38 : 16)));
-    thermal.push(.025 + Math.max(0,patch.temperature-.24) ** 2 * (.22 + patch.exposure * 1.8));
-    oxidation.push(.06 + patch.temperature * (.35 + patch.exposure));
+    // Sheltering half the circumference must not renormalize its weak diffuse
+    // heat back to a hot-log average and make the protected crown glow again.
+    const relative = clamp(patch.exposure / Math.max(.34, surface.exposure), 0, 2);
+    const direct = clamp(log.temperature * (.12 + .88 * relative ** 1.4 * patch.reactivity));
+    const opposite = Math.floor(i / SURFACE_RADIAL) * SURFACE_RADIAL + (i + SURFACE_RADIAL / 2) % SURFACE_RADIAL;
+    const conduction = Math.exp(-(patch.thickness ?? .5) / .14) * clamp(1 - patch.moisture * 3);
+    const target = Math.max(direct, surface.temperatures[opposite] * conduction);
+    const charInsulation = clamp(patch.char / .12) * (1 - clamp(patch.wood / .3)) * 20;
+    patch.temperature += (target - patch.temperature) * (1 - Math.exp(-dt * fuel.heatRate / (patch.moisture > .06 ? 38 : 16 + charInsulation)));
+    thermal.push(.008 + Math.max(0,patch.temperature-.24) ** 2 * (.55 + patch.exposure * .85) * patch.reactivity);
+    // The coal-facing underside receives the most radiation but less fresh
+    // air. Its char survives as an insulating, glowing crust while the more
+    // accessible edges oxidize; heat exposure is not an oxygen supply.
+    oxidation.push(.05 + patch.temperature * (.18 + .55 * (1 - clamp(patch.exposure / 1.2))));
   }
   remove(patches, 'moisture', dry, thermal, (patch, amount) => { patch.temperature = Math.max(0, patch.temperature - amount * .7); });
   remove(patches, 'wood', consumed, thermal, (patch, amount) => { patch.burn += amount; patch.char += amount * (fuel.charYield ?? .26); });
@@ -160,19 +209,25 @@ export function updateLogSurface(log, dt, fuel, { consumed, dry, charBurn, shed,
 }
 
 function updateSurfaceSignals(log) {
-  let glow = 0, visibleFlame = 0;
+  let glow = 0, visibleFlame = 0, peakFlame = 0;
   for (const patch of log.surface.patches) {
     const hot = clamp((patch.temperature - .26) / .65);
     patch.glow = hot ** 1.6 * clamp(patch.char / .025 + patch.burn * 1.4) * clamp((patch.wood + patch.char) / .025);
     // Yellow/orange luminosity tracks released volatiles. Mature hot char can
     // radiate strongly with little luminous gas, leaving the core visible.
-    const fresh = clamp(patch.wood / .72);
+    // Surface char is a porous vent for volatiles from the wood beneath it.
+    // Exhausting this finite surface cell must not switch off a still-burning
+    // interior; the local temperature continues to select where gas escapes.
+    const gasWood = Math.max(patch.wood, log.wood);
+    const fresh = clamp(gasWood / .72);
     const cleanChar = clamp((patch.temperature - .65) / .3) * (1 - fresh);
-    const localGas = clamp((patch.temperature - .29) / .46) * clamp(patch.wood / .12);
+    const localGas = clamp((patch.temperature - .29) / .46) * clamp(gasWood / .12);
     patch.flame = clamp(log.flame * localGas * (.42 + fresh * .58) * (1 - cleanChar * .58));
-    glow += patch.glow; visibleFlame += patch.flame;
+    glow += patch.glow; visibleFlame += patch.flame; peakFlame = Math.max(peakFlame, patch.flame);
   }
-  log.glow = glow / COUNT; log.visibleFlame = visibleFlame / COUNT;
+  // A sheltered crown changes the emitting area rather than extinguishing
+  // the whole fire. Keep overall luminosity tied to the active hot vents.
+  log.glow = glow / COUNT; log.visibleFlame = peakFlame * .65 + visibleFlame / COUNT * .35;
 }
 
 export function extinguishLogSurface(log) {
@@ -198,4 +253,18 @@ export function sampleLogSurface(log, along = .5, angle = 0) {
       + (patches[b*SURFACE_RADIAL+c][key]*(1-fx)+patches[b*SURFACE_RADIAL+d][key]*fx)*fy;
   }
   return result;
+}
+
+// Volatile gas from the hot lower face rises around the wood. Main flame roots
+// therefore follow a whole axial band rather than the temperature of its cool
+// upper bark. Interpolate rows before reducing so roots move without a jump.
+export function sampleLogFlameBand(log, along = .5) {
+  const { patches } = ensureLogSurface(log);
+  const row = clamp(along * SURFACE_AXIAL - .5, 0, SURFACE_AXIAL - 1), a = Math.floor(row), b = Math.min(a + 1, SURFACE_AXIAL - 1), blend = row - a;
+  let sum = 0, peak = 0;
+  for (let side = 0; side < SURFACE_RADIAL; side++) {
+    const flame = patches[a * SURFACE_RADIAL + side].flame * (1-blend) + patches[b * SURFACE_RADIAL + side].flame * blend;
+    sum += flame; peak = Math.max(peak, flame);
+  }
+  return peak * .65 + sum / SURFACE_RADIAL * .35;
 }

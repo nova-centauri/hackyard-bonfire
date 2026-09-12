@@ -5,7 +5,7 @@ import { BurnCycle } from '../src/lifecycle.js';
 import { createBurnVisuals, updateBurnVisuals } from '../src/burn-visuals.js';
 import { createSceneFuelMesh, disposeFuelMesh } from '../src/fuel-mesh.js';
 import { applyLogFracture } from '../src/log-damage.js';
-import { sampleLogSurface } from '../src/log-combustion.js';
+import { sampleLogSurface, sampleLogFlameBand } from '../src/log-combustion.js';
 import { createHybridFire } from '../src/hybrid-fire.js';
 
 const near = (a,b,tolerance=1e-6) => assert.ok(Math.abs(a-b)<tolerance,`${a} ≈ ${b}`);
@@ -116,10 +116,26 @@ test('a rolled material keeps its patch atlas while gas sampling and world bases
   const gas=study.volumes[0].material.uniforms;
   assert.ok(gas.uLogBasisX.value[0].distanceTo(new THREE.Vector3(1,0,0).applyQuaternion(mesh.quaternion))<1e-9);
   assert.ok(gas.uLogBasisZ.value[0].distanceTo(new THREE.Vector3(0,0,1).applyQuaternion(mesh.quaternion))<1e-9);
-  const localUp=new THREE.Vector3(0,1,0).applyQuaternion(mesh.quaternion.clone().invert());
-  const expected=sampleLogSurface(log,.5,Math.atan2(localUp.z,localUp.x)).flame;
+  const expected=sampleLogFlameBand(log,.5);
   near(gas.uFuel.value[0],expected);
   assert.ok(study.cycle.logPoses[0].x.every((value,i)=>Math.abs(value-gas.uLogBasisX.value[0].getComponent(i))<1e-9));
+});
+
+test('gas from a hot lower face feeds the plume while the upper bark stays cool', () => {
+  const study=visualStudy(),log=study.cycle.logs[0],mesh=study.logMeshes[0];
+  for(const patch of log.surface.patches){
+    const normal=new THREE.Vector3(Math.cos(patch.angle),0,Math.sin(patch.angle)).applyQuaternion(mesh.quaternion);
+    patch.flame=normal.y<-.4?.8:0;
+  }
+  const localUp=new THREE.Vector3(0,1,0).applyQuaternion(mesh.quaternion.clone().invert());
+  near(sampleLogSurface(log,.5,Math.atan2(localUp.z,localUp.x)).flame,0);
+  updateBurnVisuals(study);
+  const gas=study.volumes[0].material.uniforms;
+  assert.ok(gas.uFuel.value[0]>.5,'lower-face volatiles keep the main flame alive');
+  const strength=gas.uFuel.value[0];
+  study.burnVisuals.settling.logs[0].quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI));
+  updateBurnVisuals(study);
+  near(gas.uFuel.value[0],strength);
 });
 
 test('replacing a fractured ash slot rebuilds intact fuel and clears the old heat, char and flame roots', () => {
@@ -204,7 +220,7 @@ test('authored emissive masks are wired into the char glow only when their flag 
   const emission = new THREE.Texture(), base = new THREE.MeshStandardMaterial({ emissiveMap: emission, emissive: '#ffb68b' });
   const uniforms = { uWood: { value: 1 }, uChar: { value: 0 }, uHeat: { value: 0 }, uBurnMap: { value: null }, uBurnSlot: { value: 0 }, uBurnLength: { value: 1 }, uBurnTime: { value: 0 }, uLocalizedBurn: { value: 0 } };
   for (const cap of [false, true]) {
-    const material = burningMaterial(base, uniforms, cap);
+    const material = burningMaterial(base, uniforms, cap ? 'end' : 'bark');
     const shader = { uniforms: {}, vertexShader: '#include <begin_vertex>', fragmentShader: '#include <map_fragment>\n#include <emissivemap_fragment>' };
     material.onBeforeCompile(shader);
     assert.strictEqual(shader.uniforms.uAuthoredEmissive, cap ? authoredEmissive.end : authoredEmissive.bark, 'caps and bark read separate flags');
@@ -215,4 +231,20 @@ test('authored emissive masks are wired into the char glow only when their flag 
   }
   assert.equal(authoredEmissive.bark.value, 0, 'procedural masks leave the glow untouched by default');
   assert.ok(Object.isFrozen(authoredEmissive));
+});
+
+test('replacement wood has its own char pattern and sawn sides use a longitudinal material', () => {
+  const build=seed=>createSceneFuelMesh({definition:[[-1,.3,0],[1,.3,0],.25],fuelType:'plank',seed,mode:0,hybrid:true},sourceMaterials());
+  const first=build(42),same=build(42),replacement=build(7919);
+  assert.equal(first.userData.burnUniforms.uBurnSeed.value,same.userData.burnUniforms.uBurnSeed.value);
+  assert.notEqual(first.userData.burnUniforms.uBurnSeed.value,replacement.userData.burnUniforms.uBurnSeed.value);
+  const [side,end]=first.material;
+  assert.notEqual(side.customProgramCacheKey(),end.customProgramCacheKey(),'longitudinal and cut faces compile distinct mappings');
+  assert.equal(side.customProgramCacheKey(),replacement.material[0].customProgramCacheKey(),'new fuel varies uniforms without adding shader programs');
+  for(const material of [side,end]){
+    const shader={uniforms:{},vertexShader:THREE.ShaderLib.standard.vertexShader,fragmentShader:THREE.ShaderLib.standard.fragmentShader};
+    material.onBeforeCompile(shader);
+    assert.equal(shader.uniforms.uBurnSeed,first.userData.burnUniforms.uBurnSeed);
+  }
+  [first,same,replacement].forEach(disposeFuelMesh);
 });
