@@ -41,7 +41,7 @@ decoded. Sources and the OpenGL normal bake live in `planning/`.
 | --- | --- | --- | --- |
 | `map` (albedo) | 2048² | sRGB RGB | Dark, dry bark: the procedural base is roughly `#221a12` with plate highlights to `#5a4a38`. Fresh wood colour is mixed toward charcoal by the burn shader, so paint **unburnt** bark only. |
 | `normal` or `bump` | 2048² | linear | Normal preferred. Deep fissures between plates, shallow plate faces. |
-| `emissive` | 1024² | sRGB, red channel used | A **mask of where char cracks glow**, not a colour: white in the fissures that should shine when hot, black on plate faces. The shader multiplies it by local heat and tints it; the procedural version puts the glow in the Voronoi cracks with a soft band toward the middle of the length. |
+| `emissive` | 1024² | sRGB, red channel used | A **mask of where char cracks glow**, not a colour: white in the fissures that should shine when hot, black on plate faces. The plain material studies multiply it by local heat and tint it. **The living studies (07, 08) do not read it yet**: their burn shader writes its own procedural crack glow, so this mask is loaded but has no visible effect there until the glow is wired to it (`docs/roadmap.md`, Next). |
 
 UV layout: `u` runs once around the circumference (0 at the seam, 1 back at
 the seam), `v` runs along the length (0 = one cut end, 1 = the other). The
@@ -61,7 +61,7 @@ small scraped patches and peeled strips, which use the `exposedWood` slot.
 | --- | --- | --- | --- |
 | `map` | 1024² | sRGB | Concentric rings, pith slightly off centre, radial checks. Pale sapwood is fine; it darkens with burn state in the shader. |
 | `normal` or `bump` | 1024² | linear | Ring ridges and checks; subtle. |
-| `emissive` | 512² | sRGB, red used | Mask of radial checks that glow when the end is hot. |
+| `emissive` | 512² | sRGB, red used | Mask of radial checks that glow when the end is hot. Same caveat as bark: not read by the living studies' burn shader yet. |
 
 UV layout: planar over the disc, `(0.5, 0.5)` at the centre, the rim touching
 the edges of the image. Nothing outside the inscribed circle is visible.
