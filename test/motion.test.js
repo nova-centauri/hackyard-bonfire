@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createMotionState, firelightMood, updateFlameCentroid, updateStudyMotion } from '../src/motion.js';
+import { constrainFirelight, createMotionState, firelightMood, updateFlameCentroid, updateStudyMotion } from '../src/motion.js';
 import { createHybridFire } from '../src/hybrid-fire.js';
 import { createEmbers } from '../src/embers.js';
 import { createSteam } from '../src/steam.js';
@@ -35,7 +35,7 @@ test('wind reaches the fire, smoke and embers, and the firelight follows the fla
   // Sources sit on y = .3..; the light rides above their fuel-weighted centre and leans into the wind.
   const centroidWeight = updateFlameCentroid(study);
   assert.ok(centroidWeight > 0 && study.flameHeight > 1);
-  assert.ok(light.position.y > study.flameCentroid.y + .3, 'the light hangs above the flame roots');
+  assert.ok(light.position.y > study.flameCentroid.y + .15, 'the light hangs above the flame roots');
   assert.ok(light.position.x > study.flameCentroid.x + .1, 'a gust from +x pushes the light downwind');
   assert.ok(light.intensity > 0);
   // Steam only leaves wood that is on the fire, scaled by its moisture.
@@ -61,7 +61,7 @@ test('firelight flicker is noise-driven, gusts widen it, and a dying fire dims a
   assert.ok(spans[1] > spans[0] * 1.5, 'a gust deepens the flicker');
   const warm = light.color.clone();
   study.cycle.flame = .2; study.animationTime = 300; updateStudyMotion(study);
-  assert.ok(light.intensity < base * .12, 'little flame, little light');
+  assert.ok(light.intensity < base * .2, 'little flame, little light; coals still warm the pit');
   assert.ok(light.color.g < warm.g, 'ember light is redder than flame light');
 });
 
@@ -74,12 +74,28 @@ test('the firelight has calm spells, lively spells and brief dips rather than on
   const deviation = window => { const m = window.reduce((a, b) => a + b, 0) / window.length; return Math.sqrt(window.reduce((a, b) => a + (b - m) ** 2, 0) / window.length); };
   const windows = []; for (let start = 0; start + 300 <= samples.length; start += 300) windows.push(deviation(samples.slice(start, start + 300)));
   assert.ok(Math.max(...windows) > Math.min(...windows) * 1.8, 'ten-second stretches differ in how much the light moves');
-  const dips = samples.filter(value => value < mean * .75).length / samples.length;
-  assert.ok(dips > .002 && dips < .04, `occasional deep dips (${(dips * 100).toFixed(2)}% of frames)`);
+  const dips = samples.filter(value => value < mean * .82).length / samples.length;
+  assert.ok(dips > .002 && dips < .06, `occasional dips (${(dips * 100).toFixed(2)}% of frames)`);
   assert.ok(samples.every(value => value > 0), 'the light never goes out');
   for (const t of [0, 12.5, 400]) {
     const mood = firelightMood(t);
     assert.ok(mood.lively >= 0 && mood.lively <= 1 && mood.dip >= 0 && mood.dip <= 1);
     assert.deepEqual(firelightMood(t), mood, 'the mood is a pure function of time');
   }
+});
+
+test('firelight stays in the flame volume and never inside a log', () => {
+  const target = new THREE.Vector3(1.4, .15, .9);
+  constrainFirelight(target, { firePower: .8, flameHeight: 2 });
+  assert.ok(Math.hypot(target.x, target.z) < .55);
+  assert.ok(target.y > .57 && target.y < 1.4);
+  const { study, light, core } = motionStudy();
+  study.flameCentroid.set(1.2, .2, .8);
+  study.flameHeight = 2.2;
+  study.animationTime = 1;
+  updateStudyMotion(study);
+  assert.ok(Math.hypot(light.position.x, light.position.z) < .55, 'the key light stays over the pit');
+  assert.ok(light.position.y > .57 && light.position.y < 1.45);
+  assert.ok(Math.hypot(core.position.x, core.position.z) < .5);
+  assert.ok(core.position.y < .4, 'the coal light stays in the bed');
 });

@@ -51,6 +51,17 @@ export function firelightMood(time) {
   return { lively: agitation * agitation, dip };
 }
 
+// Keep the key light in the flame volume: never inside a log, never as a
+// lantern hovering a metre above the pit. Shadows then belong to the fire.
+export function constrainFirelight(target, { firePower = 1, flameHeight = 1 } = {}) {
+  const span = Math.hypot(target.x, target.z);
+  const maxR = .38 + firePower * .14;
+  if (span > maxR) { target.x *= maxR / span; target.z *= maxR / span; }
+  const maxY = 1.02 + firePower * .22 + Math.min(.18, flameHeight * .05);
+  target.y = THREE.MathUtils.clamp(target.y, .58, maxY);
+  return target;
+}
+
 export function updateStudyMotion(study) {
   const motion = study.motion;
   if (!motion) return;
@@ -87,17 +98,27 @@ export function updateStudyMotion(study) {
   const { lively, dip } = firelightMood(time);
   motion.lights.forEach(({ light, intensity, home }, index) => {
     const noise = flicker(time * (index ? 1.35 : 1), index * 17);
-    const amplitude = index === 0 ? .22 + lively * .2 + gust * .26 : .13 + lively * .08;
-    const level = (1 + (noise - .5) * 2 * amplitude + impact * .32) * (1 - dip * (index === 0 ? .3 : .16));
-    light.intensity = intensity * Math.max(0, level) * (index === 0 ? firePower : coalHeat);
+    const amplitude = index === 0 ? .2 + lively * .18 + gust * .22 : .12 + lively * .07;
+    const level = (1 + (noise - .5) * 2 * amplitude + impact * .28) * (1 - dip * (index === 0 ? .18 : .1));
+    // Coals keep a warm pool when the gas dips, so the pit stays readable.
+    const power = index === 0 ? Math.max(firePower, coalHeat * .16) : coalHeat;
+    light.intensity = intensity * Math.max(0, level) * power;
     if (index === 0 && study.flameCentroid) {
       const target = motion.lightTarget.copy(study.flameCentroid);
-      target.y += .3 + .45 * firePower + .12 * study.flameHeight;
-      target.x += (smoothNoise(time * .7, 41) - .5) * (.12 + lively * .1) + (wind?.x || 0) * .18;
-      target.z += (smoothNoise(time * .6, 43) - .5) * (.12 + lively * .1) + (wind?.z || 0) * .18;
-      if (dt === 0) light.position.copy(target); else light.position.lerp(target, 1 - Math.exp(-dt * 2.5));
+      target.y += .18 + .32 * firePower + .05 * study.flameHeight;
+      target.x += (smoothNoise(time * .7, 41) - .5) * (.08 + lively * .07) + (wind?.x || 0) * .16;
+      target.z += (smoothNoise(time * .6, 43) - .5) * (.08 + lively * .07) + (wind?.z || 0) * .16;
+      constrainFirelight(target, { firePower, flameHeight: study.flameHeight });
+      if (dt === 0) light.position.copy(target); else light.position.lerp(target, 1 - Math.exp(-dt * 2.2));
+      constrainFirelight(light.position, { firePower, flameHeight: study.flameHeight });
       light.color.copy(EMBER_LIGHT).lerp(WARM, Math.min(1, firePower * 1.6));
     } else if (index === 0) light.position.copy(home);
+    else if (index === 1 && study.flameCentroid) {
+      const mix = dt === 0 ? 1 : 1 - Math.exp(-dt * 1.8);
+      light.position.x += (study.flameCentroid.x * .35 - light.position.x) * mix;
+      light.position.z += (study.flameCentroid.z * .35 - light.position.z) * mix;
+      light.position.y += (.14 + coalHeat * .1 - light.position.y) * mix;
+    }
   });
   motion.coalMaterial.emissiveIntensity = motion.coalEmission;
   if (motion.coalMaterial.userData.time) {

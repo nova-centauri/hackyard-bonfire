@@ -54,6 +54,13 @@ Done in this pass:
   brief dips. The page opens in focus mode with a gear that is always
   visible; the poking stick is a modelled branch and pushes harder.
 
+## This pass (watchable fire)
+
+Geometry, settling and lighting for the observer fire: logs read as wood
+(bark ridges, sawn checked ends), they sit on the soil and on each other
+instead of hovering or sinking, and the night stays warm and readable with
+firelight that stays in the flame volume.
+
 ## Next
 
 1. **Volumetric resolution**: render fire and smoke at half resolution with a
@@ -130,3 +137,8 @@ Done in this pass:
   drops a uniform random kind. **Keep the fire fed** is now a remembered
   preference (manual tending lets the fire go out). Burn speed gains 0.5×,
   0.75×, 2× and 5× alongside the existing steps.
+- 2026-09-12 — Watchable fire: bark ridges, sawn/checked ends; ground
+  contacts rest on the soil instead of a 12 mm skin; round-wood contacts
+  use the rendered profile so logs no longer sink into a 16-gon hull;
+  firelight stays in the pit, coals keep a warm pool during dips, night
+  fill is warmer and less blue.

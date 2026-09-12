@@ -28,7 +28,7 @@ test('crossed logs rest on real lower fuel and sink to the bowl when support bur
   for (let frame = 2; frame <= 60; frame++) {
     updateLogSettling(state, cycle, frame / 60, floor); impacts.push(...state.impacts);
   }
-  assert.ok(Math.abs(state.logs[1].y - .011) < .002, 'the visible cylinder rests within the contact skin of the ground');
+  assert.ok(Math.abs(state.logs[1].y) < .004, 'the visible cylinder rests on the soil, not a centimetre above it');
   assert.equal(impacts.length, 1);
   assert.ok(impacts[0].strength > .5);
   assert.ok(Math.abs(impacts[0].position.x) < .01 && Math.abs(impacts[0].position.z) <= 1.01, 'impact lies on the contacting log, including an end-first landing');
@@ -253,7 +253,7 @@ test('an offset parallel log rolls outward off the pile instead of following an 
   }
   const upper = state.logs[1];
   assert.ok(upper.z > .48, 'its center moves away from the pile center');
-  assert.ok(Math.abs(upper.y - .011) < .015, 'it reaches the soil beside the supporting log');
+  assert.ok(Math.abs(upper.y) < .02, 'it reaches the soil beside the supporting log');
   assert.ok(rolled > 1, 'rolling includes rotation about the wood axis');
   assert.deepEqual(upper.supports, []);
   state.logs.forEach(pose => assertGroundClear(pose));

@@ -78,3 +78,18 @@ test('wood profiles vary deterministically while bark strips remain closed and p
   const actual = localPoint.clone().applyMatrix4(peel.matrixWorld), expected = localPoint.clone().applyMatrix4(trunk.matrixWorld);
   assert.ok(actual.distanceTo(expected) < 1e-8, 'bark follows the shortened, tipped and sunken parent');
 });
+
+test('bark ridges and a sawn, checked end make firewood rather than a lathed cylinder', () => {
+  const profile = createLogGeometry({ radius: .25, length: 2.7, seed: 42 }).userData.profile;
+  assert.ok(profile.ridges >= 6 && profile.ridge > .02);
+  const mid = Array.from({ length: 24 }, (_, i) => sampleLogSurface(profile, i / 24 * Math.PI * 2, .5));
+  const radii = mid.map(p => Math.hypot(p.x, p.z));
+  assert.ok(Math.max(...radii) - Math.min(...radii) > profile.radius * .08, 'the midsection is not circular');
+  const endY = Array.from({ length: 24 }, (_, i) => sampleLogSurface(profile, i / 24 * Math.PI * 2, 1).y);
+  assert.ok(Math.max(...endY) - Math.min(...endY) > .008, 'the cut is a sawn face, not a plane');
+  const cap = Array.from({ length: 36 }, (_, i) => {
+    const p = sampleLogSurface(profile, i / 36 * Math.PI * 2, 0);
+    return Math.hypot(p.x, p.z);
+  });
+  assert.ok(Math.max(...cap) - Math.min(...cap) > profile.radius * .04, 'a drying check pinches the cap');
+});

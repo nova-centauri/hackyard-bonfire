@@ -20,18 +20,29 @@ export function createLogProfile({ radius, length, seed = 1, faceted = false, fu
       curl: .025 + rand() * .025,
     })),
   };
+  // Ridges, a drying check and a sawn wobble are extra draws from the same
+  // seed, so existing knot and patch placement stays put.
+  profile.ridges = 6 + (rand() * 3 | 0);
+  profile.ridge = .026 + rand() * .018;
+  profile.cutWobble = .01 + rand() * .014;
+  profile.check = .035 + rand() * .025;
+  profile.checkAngle = rand() * TAU;
   if (fuelType === 'kindling') {
     profile.patches = profile.patches.slice(0, 1);
     for (const patch of profile.patches) { patch.width *= .65; patch.height *= .8; patch.curl *= .28; }
     profile.knots = profile.knots.slice(0, 1);
     profile.oval *= .7;
+    profile.ridge *= .45; profile.check *= .4; profile.cutWobble *= .5;
   } else if (fuelType === 'small-log') {
     for (const patch of profile.patches) patch.curl *= .65;
+    profile.ridge *= .8;
   } else if (fuelType === 'stump') {
     profile.bend *= .2; profile.bendZ *= .2; profile.twist *= .25;
     profile.taper = .88 + rand() * .06;
     profile.rootFlare = { strength: .22 + rand() * .06, lobes: 5, phase: rand() * TAU };
+    profile.check *= .25; profile.cutWobble *= .4; profile.ridge *= 1.12;
   }
+  if (faceted) { profile.ridge *= .35; profile.check *= .5; }
   return profile;
 }
 
@@ -43,6 +54,11 @@ export function sampleLogSurface(profile, angle, t, offset = 0, target = new THR
     + .038 * Math.sin(3 * angle + phase + t * 1.7)
     + .019 * Math.sin(7 * angle - t * 5 + phase)
     + .022 * Math.sin(t * 11 + phase);
+  // Longitudinal bark plates, calmer at the caps so the cut faces stay readable.
+  if (profile.ridges) {
+    const endCalm = 1 - .4 * (t * 2 - 1) ** 2;
+    shape += profile.ridge * Math.sin(angle * profile.ridges + phase + t * 1.35) * endCalm;
+  }
   for (const knot of profile.knots) {
     const across = wrappedAngle(angle - knot.angle) / .38, along = (t - knot.t) / .075;
     shape += knot.size * Math.exp(-across * across - along * along);
@@ -52,14 +68,20 @@ export function sampleLogSurface(profile, angle, t, offset = 0, target = new THR
     const across = wrappedAngle(angle - patch.angle) / patch.width, along = (t - patch.t) / patch.height;
     shape -= .033 * Math.exp(-(across * across + along * along) * 2.3);
   }
+  // A drying check pinches the cut face along one diameter, like split firewood.
+  if (profile.check) {
+    const end = Math.pow(Math.abs(t * 2 - 1), 8);
+    shape -= profile.check * end * Math.pow(Math.abs(Math.cos(angle - profile.checkAngle)), 5);
+  }
   // Stump roots widen toward the base, with distinct buttresses around its rim.
   // Sampling this here keeps bark patches and both cap rims on the same shape.
   const roots = profile.rootFlare;
   const flare = roots ? (1 - t) ** 3 * (.13 + roots.strength * ((1 + Math.cos(angle * roots.lobes + roots.phase)) * .5) ** 3) : 0;
-  const r = radius * (1 + (profile.taper - 1) * t) * (clamp(shape, .82, 1.15) + flare);
+  const r = radius * (1 + (profile.taper - 1) * t) * (clamp(shape, .78, 1.18) + flare);
   const x = Math.cos(angle) * r, z = Math.sin(angle) * r;
-  const cutWeight = Math.pow(Math.abs(t * 2 - 1), 8);
-  const y = (t - .5) * length + (x * profile.cutX + z * profile.cutZ) * cutWeight;
+  const cutWeight = Math.pow(Math.abs(t * 2 - 1), 6);
+  const saw = (profile.cutWobble || 0) * Math.sin(angle * 3 + phase) * cutWeight * radius;
+  const y = (t - .5) * length + (x * profile.cutX + z * profile.cutZ) * cutWeight + saw;
   return target.set(cx + x + Math.cos(angle) * offset, y, cz + z + Math.sin(angle) * offset);
 }
 
