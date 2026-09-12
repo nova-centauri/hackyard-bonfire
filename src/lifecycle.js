@@ -5,7 +5,11 @@ import { copyCombustionPose, combustionEnvironment, ensureLogSurface, extinguish
 // Keep the slow burn independent of the flame shader's motion clock.
 export const BURN_SETTINGS = Object.freeze({ step: .5, woodRate: .00165, charRate: .00072, cooling: .0015 });
 export const SPEEDS = [1, 10, 30, 60, 300, 1200];
-export const TENDING = Object.freeze({ lowWood: 1.1, roaringFlame: 2.2, recheck: 45 });
+// A piece catches once it is dry enough and its bulk heat passes this level.
+export const IGNITION = Object.freeze({ temperature: .39, moisture: .055 });
+// Tending: add when less than this much wood can still burn, never onto a
+// roaring fire, and never with this many pieces already waiting to catch.
+export const TENDING = Object.freeze({ lowWood: 1.1, roaringFlame: 2.2, recheck: 45, waitingPieces: 2 });
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const randFor = seed => () => {
   seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -47,7 +51,7 @@ export class BurnCycle {
       moisture, initialMoisture: moisture, temperature: initial ? .72 + r() * .2 : .025,
       flame: initial ? .55 + r() * .3 : 0, addedAt: initial ? -r() * 260 : null,
       scale: .91 + r() * .15, angle: (r() - .5) * .20, offset: (r() - .5) * .16,
-      density: .86 + r() * .3, shed: 0, shedNotice: 0, hot: initial, everLit: initial,
+      density: .86 + r() * .3, shed: 0, shedNotice: 0, hot: initial, everLit: initial, catching: true,
     };
   }
   record(title, detail) {
@@ -58,13 +62,21 @@ export class BurnCycle {
   get canAdd() { return this.logs.some(l => l.phase === 'queued' || l.phase === 'ash'); }
   // Wood still on the bed, in whole-log units; ash slots and the queue do not count.
   get woodOnBed() { return this.logs.reduce((sum, l) => sum + (l.phase === 'queued' || l.phase === 'ash' ? 0 : l.wood * getFuelType(l.fuelType).mass), 0); }
+  // Wood the fire can actually draw on: pieces that are alight, or lying where
+  // the bed and their neighbours run hot enough to light them. A log that
+  // rolled to the edge of the pit is still wood on the bed, but it will not
+  // carry the fire, and counting it left the fire untended until it went out.
+  get burnableWood() { return this.logs.reduce((sum, l) => sum + (l.phase === 'queued' || l.phase === 'ash' || !(l.flame > 0 || l.catching) ? 0 : l.wood * getFuelType(l.fuelType).mass), 0); }
+  // Pieces on the bed that have never caught; fresh wood still drying counts.
+  get waitingPieces() { return this.logs.filter(l => l.phase !== 'queued' && l.phase !== 'ash' && !l.everLit).length; }
   // Once the finite queue is spent, a fire left burning is kept alive the way
   // someone sitting beside it would tend it: a fresh piece only when the wood
-  // is running low, never onto a roaring fire, and never onto a cold bed that
-  // could not light it. This keeps a modest fire going for as long as the page
+  // that can burn is running low, never onto a roaring fire, never onto a cold
+  // bed that could not light it, and never while two pieces are already
+  // waiting to catch. This keeps a modest fire going for as long as the page
   // stays open without ever piling the bed high.
   get tending() { return this.autoFeed && this.queued === 0 && this.canAdd && this.coalHeat > .12; }
-  get needsFuel() { return this.tending && this.woodOnBed < TENDING.lowWood && this.flame < TENDING.roaringFlame; }
+  get needsFuel() { return this.tending && this.burnableWood < TENDING.lowWood && this.flame < TENDING.roaringFlame && this.waitingPieces < TENDING.waitingPieces; }
   // Retained heat is a reservoir, so a flame-free coal bed can still be healthy
   // enough to ignite dry wood. Keep coalHeat as the shared rendering signal.
   get coreHeat() { return this.coalHeat; }
@@ -94,7 +106,14 @@ export class BurnCycle {
   setLogPoses(poses = []) {
     // Copy the physics transforms: accelerated lifecycle steps must not mutate
     // a render pose, and replacement pieces must not inherit the departed pose.
-    this.logPoses = poses.map(pose => copyCombustionPose(pose));
+    // A piece still falling toward the pile has no bed contact yet, so it keeps
+    // its last resting pose, or the calibrated slot for a new arrival, until it
+    // lands: the drop lasts half a real second, which at 1200× would otherwise
+    // be ten burn minutes of wood hanging in the air away from the coals.
+    this.logPoses = poses.map((pose, slot) => {
+      if (pose?.inFlight) { const previous = this.logPoses[slot]; return previous && previous.id === pose.id ? previous : null; }
+      return copyCombustionPose(pose);
+    });
   }
   advance(seconds) {
     if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError('Burn time must be a finite positive duration.');
@@ -134,13 +153,15 @@ export class BurnCycle {
       const bedContact = log.slot < 3 ? .86 : .71;
       const bedCoupling = log.surface.bedCoupling;
       const target = clamp(oldCoalHeat * bedContact * bedCoupling + neighbors + oldFlames[log.slot] * (.43 + Math.min(1, bedCoupling) * .14));
+      // Whether this piece, where it lies, is heading for ignition at all.
+      log.catching = target >= IGNITION.temperature;
       log.temperature += (target - log.temperature) * (1 - Math.exp(-dt * fuel.heatRate / (log.moisture > .06 ? 55 : 24)));
       const dry = Math.min(log.moisture, dt * .00115 * fuel.heatRate * Math.max(0, log.temperature - .14));
       log.moisture -= dry;
       // Evaporation takes energy from the wood and bed before it can burn.
       log.temperature = Math.max(0, log.temperature - dry * .7);
       evaporated += dry * fuel.mass;
-      const ignition = log.moisture < .055 && log.temperature > .39 && log.wood > .006;
+      const ignition = log.moisture < IGNITION.moisture && log.temperature > IGNITION.temperature && log.wood > .006;
       const targetFlame = ignition ? clamp((log.temperature - .35) * 2.2) * Math.min(1, log.wood / .17) : 0;
       log.flame += (targetFlame - log.flame) * (1 - Math.exp(-dt / 5));
       if (log.flame < .0005) log.flame = 0;

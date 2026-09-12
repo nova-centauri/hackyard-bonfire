@@ -37,6 +37,17 @@ Done in this pass:
   glow (`src/log-burning-material.js`): a per-slot uniform flag is raised when
   a mask loads, so the glow concentrates in the painted fissures; procedural
   masks leave the glow unchanged.
+- The tended fire no longer goes out. Reported as "the fire dies at 10× and
+  30×", but it died at every speed (70 burn-minutes at 1×, so nobody saw it
+  in real time): the live wood positions gave the pile three quarters of the
+  heat coupling the burn model was tuned for, a log that rolled to the edge
+  still counted as fuel so tending stopped, and at 300× and above each fresh
+  piece was dropped onto the previous one while it was still falling, stacking
+  wood 20 m into the air. Coupling is now normalised to the mean designed
+  slot, tending counts only wood that can catch (at most two pieces waiting),
+  a falling piece keeps its last resting pose for the burn, and arrivals are
+  dropped onto the settled pile. A viewer-loop test (`test/tended-fire.test.js`)
+  runs 75 burn-minutes at 1200× with real settling and poses.
 - Long-session variety, first pass: a seeded restlessness envelope gives the
   pops (and the audio's crackle) lively spells and lulls; loud pops with
   ember showers every few minutes; firelight with calm and lively spells and
@@ -87,6 +98,15 @@ Done in this pass:
 - 2026-09-12 — Authored emissive masks wired into the burn shader's char
   glow behind a per-slot flag; verified headlessly (no shader errors, flag
   reaches the compiled programs).
+- 2026-09-12 — Fixed the tended fire going out at every burn speed: heat
+  coupling recalibrated to the settled pile, tending counts only wood that
+  can catch, falling wood keeps its last resting pose for the burn, and new
+  pieces are dropped onto the settled pile rather than onto one still in the
+  air. Measured headlessly with the viewer loop: never cold over four
+  burn-hours at 10×, 30×, 60×, 300× and 1200× (flames present 95–97% of the
+  time, bed heat never below 0.6, at most five pieces on the bed) and over
+  two burn-hours at 1× (flames 90% of the time). Before the fix the same
+  loop went cold at 70 burn-minutes at 1× and 81 at 30×.
 - 2026-09-12 — Fixed the twig nest tipping onto its side: the instanced
   twig draw sits in the twig group and the settling scan mistook it for a
   29th twig, rotating and lifting the whole nest within two seconds of every
