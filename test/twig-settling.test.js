@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createTwigSettling, updateTwigSettling } from '../src/twig-settling.js';
+import { createTwigSettling, twigBurnScale, updateTwigSettling } from '../src/twig-settling.js';
 
 const vector = (x, y, z) => new THREE.Vector3(x, y, z);
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} ≈ ${b}`);
@@ -46,7 +46,8 @@ test('burned twig pairs rotate and fall flat onto uneven dirt without leaving su
   cycle.time = 120; updateTwigSettling(state, cycle, 1, [], ground); updateTwigSettling(state, cycle, 2.5, [], ground);
   const [a, b] = ends(main), [forkA, forkB] = ends(fork);
   near(a.y, b.y); near(forkA.y, forkB.y);
-  near(a.distanceTo(b), initialLength * (.12 + .88 * Math.sqrt(.8)));
+  near(a.distanceTo(b), initialLength * twigBurnScale(120).scale);
+  assert.ok(Math.abs(twigBurnScale(120).scale - (.12 + .88 * Math.sqrt(.8))) < .0025, 'the quantized burn scale stays within a half percent of the smooth curve');
   assert.ok(forkA.distanceTo(a.clone().lerp(b, .58)) < 1e-6, 'the fork remains attached while the twig falls');
   assert.deepEqual(twigs.scale.toArray(), [1, 1, 1], 'the group is never vertically squashed');
   for (const mesh of twigs.children) {

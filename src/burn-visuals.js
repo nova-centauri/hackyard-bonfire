@@ -251,7 +251,9 @@ export function updateBurnVisuals(study, force = false) {
     color.set('#d0b8a0').multiplyScalar(Math.max(.18, 2.4 - age * 1.6)); view.flakes.setColorAt(p.index, color);
   }
   view.particles = view.particles.filter(p => t - p.start < 2.8);
-  if (flakesChanged) { view.flakes.instanceMatrix.needsUpdate = true; view.flakes.instanceColor.needsUpdate = true; opaqueChanged = true; }
+  // Falling char flakes are a few centimetres across and live inside the fire;
+  // they are not worth a depth and shadow re-render on every frame they fall.
+  if (flakesChanged) { view.flakes.instanceMatrix.needsUpdate = true; view.flakes.instanceColor.needsUpdate = true; }
   view.flakes.visible = view.particles.length > 0;
   updateImpactEmbers(view, t);
   if (updateTwigSettling(view.twigSettling, cycle, t, view.settling.logs, groundHeight)) { study.twigInstances?.sync(); opaqueChanged = true; }

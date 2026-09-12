@@ -70,6 +70,14 @@ function nearestSupport(piece, poses, twigs) {
   return support ? { id: support.id, radius: support.radius } : null;
 }
 
+// Small twigs burn down over the first ten simulated minutes. The slow shrink
+// is quantized to half-percent steps: invisible on a twig, but it stops every
+// burn step from re-rendering depth and shadows.
+export function twigBurnScale(burnTime) {
+  const remaining = clamp(1 - burnTime / 600, 0, 1);
+  return { scale: Math.round((.12 + .88 * Math.sqrt(remaining)) * 200) / 200, visible: remaining > .015 };
+}
+
 export function updateTwigSettling(state, cycle, time, poses = [], groundHeight = () => 0) {
   const { twigs, pieces } = state, token = `${cycle.seed}:${cycle.resetSerial}`;
   let changed = false;
@@ -80,10 +88,9 @@ export function updateTwigSettling(state, cycle, time, poses = [], groundHeight 
     }
     changed = true;
   }
-  // Small twigs burn down early, but retain their shape while falling. Scaling
-  // their whole group's Y axis left the unsupported upper tips hanging in air.
-  const remaining = clamp(1 - cycle.time / 600, 0, 1);
-  const scale = .12 + .88 * Math.sqrt(remaining), visible = remaining > .015;
+  // Twigs retain their shape while falling. Scaling their whole group's Y
+  // axis left the unsupported upper tips hanging in air.
+  const { scale, visible } = twigBurnScale(cycle.time);
   if (twigs.visible !== visible) { twigs.visible = visible; changed = true; }
   twigs.scale.setScalar(1); twigs.updateWorldMatrix(true, false);
   if (!visible) return changed;
