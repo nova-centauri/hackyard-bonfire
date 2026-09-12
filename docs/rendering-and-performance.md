@@ -123,3 +123,11 @@ samples per frame and the awake fraction.
   unchanged in structure; contacts are still recomputed several times per
   substep. It is bounded and brief, but it is where a profile points if a
   poke ever stutters on a slow machine.
+- The depth pre-pass and shadow map still re-render on about a third of
+  settled frames (measured 35% over 70 s of a seeded fire at 1×): the brief
+  shrink-settle wakes of logs (about half) and char fragments (the rest) move
+  geometry by more than the 0.4 mm threshold. Shortening the re-settle timer
+  did not change it, because it is real motion. The levers are a larger
+  shrink-wake gap (fewer, bigger settles) and letting fragments sink without
+  waking their neighbours; both trade a little physical fidelity for fewer
+  passes and were left as they are.
