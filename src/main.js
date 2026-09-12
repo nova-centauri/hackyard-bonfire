@@ -2,6 +2,7 @@ import './style.css';
 import { studies } from './styles.js';
 import { BonfireViewer } from './scene.js';
 import { mountBurnPanel } from './burn-panel.js';
+import { FireAudio } from './fire-audio.js';
 
 const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2c1 6-6 7-5 12 1-2 3-3 4-5 0 3 5 5 5 8a5 5 0 0 1-10 0c-2-6 4-9 6-15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -47,6 +48,31 @@ function updateMotionControl(){
  document.querySelector('#frozen-label').hidden=!!current?.animated;
  button.textContent=viewer?.paused?'Play motion':'Pause motion';
  button.setAttribute('aria-label',viewer?.paused?'Play animation':'Pause animation');
+ updateAudioControl();
+}
+function updateAudioControl(){
+ const button=document.querySelector('#sound-toggle');
+ if(!button)return;
+ const enabled=!!viewer?.audio?.enabled;
+ button.textContent=enabled?'Sound on':'Sound off';
+ button.setAttribute('aria-pressed',String(enabled));
+ button.setAttribute('aria-label',enabled?'Mute fire sound':'Enable fire sound');
+ document.querySelector('#sound-volume').disabled=!enabled;
+ const status=document.querySelector('#sound-status');
+ if(!status.dataset.error)status.textContent=!enabled?'Ambience & wood crackles':!current?.animated?'Still study · sound paused':viewer?.paused?'Paused with the fire':'Crackles follow falling logs';
+}
+function mountAudioControls(){
+ document.querySelector('.layers-panel').insertAdjacentHTML('beforeend',`<div class="audio-controls" role="group" aria-label="Fire audio"><button id="sound-toggle" class="sound-toggle" aria-pressed="false" aria-label="Enable fire sound">Sound off</button><label class="audio-volume" for="sound-volume"><span>Volume</span><output id="sound-volume-value" aria-hidden="true">30%</output><input id="sound-volume" type="range" min="0" max="100" value="30" aria-label="Fire sound volume" disabled></label><span id="sound-status" class="audio-status" aria-live="polite">Ambience & wood crackles</span></div>`);
+ document.querySelector('#sound-toggle').addEventListener('click',async()=>{
+  const status=document.querySelector('#sound-status');delete status.dataset.error;
+  try{await viewer.audio.setEnabled(!viewer.audio.enabled);}
+  catch(error){console.warn('Fire audio unavailable:',error);status.dataset.error='true';status.textContent='Sound unavailable in this browser';}
+  updateAudioControl();
+ });
+ document.querySelector('#sound-volume').addEventListener('input',event=>{
+  viewer.audio.setVolume(Number(event.target.value)/100);
+  document.querySelector('#sound-volume-value').value=`${event.target.value}%`;
+ });
 }
 function loadStudy(config){
  current=config;
@@ -62,6 +88,8 @@ function loadStudy(config){
 }
 try{
  viewer=new BonfireViewer(document.querySelector('#canvas-container'));
+ viewer.audio=new FireAudio();
+ mountAudioControls();
  const updateBurnPanel=mountBurnPanel(viewer);
  viewer.onError=message=>{const loading=document.querySelector('#loading');loading.textContent=message;loading.hidden=false;};
  viewer.onPlaybackChange=updateMotionControl;
@@ -72,6 +100,9 @@ try{
   stage.dataset.sceneTime=viewer.current.animationTime.toFixed(3);
   stage.dataset.frameCount=viewer.frameCount;
   stage.dataset.shaderErrors=viewer.shaderErrors.length;
+  stage.dataset.impactCount=viewer.current.burnVisuals?.impactSerial||0;
+  stage.dataset.impactEmbers=viewer.current.burnVisuals?.embers.length||0;
+  stage.dataset.audioState=viewer.audio?.context?.state||'off';
   updateBurnPanel();
  };
  loadStudy(resolveStudy());

@@ -22,11 +22,11 @@ export const studies = [
   { id: 'living-contours', number: '07', name: 'Living contours', style: 'Folded flame', collection: 'refinements',
     tag: 'INK & WASH / LUMINOUS FOLDS',
     description: 'Luminous folds over an earthen clearing. Follow each log from whole wood through flame, glowing char and quiet ash.',
-    color: '#ffc27d', background: '#111510', ground: '#242823', smoke: '#77817e', bloom: .42, exposure: 1.08, seed: 22,
+    color: '#ffc27d', background: '#000000', ground: '#242823', smoke: '#77817e', bloom: .48, exposure: .98, seed: 22,
     camera: [6.7, 4.3, 8.2], target: [0, 1.95, 0], flameScale: 1, mode: 5, solidMode: 2, fireVariant: 1, animated: true },
   { id: 'wild-draft', number: '08', name: 'Wild draft', style: 'Turbulent flame', collection: 'refinements',
     tag: 'INK & WASH / CURLS & WISPS',
     description: 'A wind-touched fire, from first heat to the last coal. Whole logs catch, char and settle into the dirt as the fire lives out its cycle.',
-    color: '#f5a665', background: '#111510', ground: '#242823', smoke: '#77817e', bloom: .42, exposure: 1.08, seed: 22,
+    color: '#f5a665', background: '#000000', ground: '#242823', smoke: '#77817e', bloom: .48, exposure: .98, seed: 22,
     camera: [6.7, 4.3, 8.2], target: [0, 1.95, 0], flameScale: 1, mode: 5, solidMode: 2, fireVariant: 2, animated: true },
 ];

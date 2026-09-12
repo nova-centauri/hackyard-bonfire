@@ -75,6 +75,12 @@ export function createVolume(kind, config, depthTexture) {
          float alpha=1.-exp(-density*stepSize*1.28);
          vec3 color=mix(vec3(.36,.23,.14),uSmokeColor,smoothstep(1.,3.8,p.y));
          color*=.8+cloud*.65;
+         // Only the lower smoke catches the firelight; the plume disappears into night.
+         if(uMode==5){
+           float firelight=exp(-max(0.,p.y-1.3)*.9);
+           color=mix(vec3(.018,.022,.027),vec3(.40,.19,.065),firelight)*(.75+cloud*.35);
+           alpha*=1.-smoothstep(3.4,6.2,p.y);
+         }
          `:`
          float density=flame(p);
          float heat=clamp(density*2.3,0.,1.);

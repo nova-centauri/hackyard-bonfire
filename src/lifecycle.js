@@ -13,6 +13,7 @@ export const PHASE_LABELS = { queued: 'Waiting', fresh: 'Whole log', drying: 'Dr
 export class BurnCycle {
   constructor(seed = 8108) { this.reset(seed); }
   reset(seed) {
+    this.resetSerial = (this.resetSerial ?? 0) + 1;
     this.seed = seed >>> 0; this.random = randFor(this.seed); this.time = 0; this.remainder = 0;
     this.autoFeed = true; this.events = []; this.serial = 0; this.revision = 0; this.phase = null;
     const r = this.random;

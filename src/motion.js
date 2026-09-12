@@ -30,6 +30,8 @@ export function updateStudyMotion(study) {
   const cycle = study.cycle;
   const firePower = cycle ? Math.min(1, cycle.flame / 3.2) : 1;
   const coalHeat = cycle ? cycle.coalHeat : 1;
+  const impact = study.burnVisuals?.impactPulse || 0;
+  for (const volume of study.volumes) if (volume.material.uniforms.uImpact) volume.material.uniforms.uImpact.value = impact;
   const sparkPower=firePower+(cycle?.coalMass>.005?coalHeat*.10:0);
   motion.sparks.visible=sparkPower>.002;
   motion.sparks.material.opacity=.94*Math.min(1,sparkPower);
@@ -68,9 +70,14 @@ export function updateStudyMotion(study) {
   }
   // Low-amplitude light variation keeps the material detail readable.
   motion.lights.forEach(({ light, intensity }, index) => {
-    light.intensity = intensity * (1 + Math.sin(time * 6.2 + index * 2) * .045 + Math.sin(time * 10.7 + 1.3) * .025) * (index===0 ? firePower : coalHeat);
+    light.intensity = intensity * (1 + Math.sin(time * 6.2 + index * 2) * .065 + Math.sin(time * 10.7 + 1.3) * .035 + impact * .32) * (index===0 ? firePower : coalHeat);
   });
   motion.coalMaterial.emissiveIntensity = motion.coalEmission * (1 + Math.sin(time * 2.3) * .065) * coalHeat * 1.7;
+  if(motion.coalMaterial.userData.time){
+    motion.coalMaterial.userData.time.value=time;
+    motion.coalMaterial.userData.heat.value=coalHeat;
+    motion.coalMaterial.userData.impact.value=impact;
+  }
   if(cycle)motion.coalMaterial.userData.bedAsh.value=Math.min(1,cycle.ashMass/(cycle.coalMass+cycle.ashMass+.001))*(1-coalHeat*.7);
   motion.barkMaterial.emissiveIntensity = motion.barkEmission * (1 + Math.sin(time * 3.1 + .8) * .045);
   if(cycle)for(const item of study.layers.sparks.children)if(item.isMesh)item.visible=cycle.time<600&&firePower>.04;

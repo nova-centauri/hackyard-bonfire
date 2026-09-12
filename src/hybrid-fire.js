@@ -31,7 +31,7 @@ const noise = `
 export function createHybridFire(config, depthTexture, logDefs) {
   const variant = config.fireVariant;
   const sources = inkFlameSources(config.seed);
-  const lo = new THREE.Vector3(-1.9, .08, -1.9), hi = new THREE.Vector3(2.15, 4.55, 1.9);
+  const lo = new THREE.Vector3(-2.15, -.32, -2.15), hi = new THREE.Vector3(2.35, 4.55, 2.15);
   const size = hi.clone().sub(lo);
   const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
   geometry.translate(...lo.clone().add(hi).multiplyScalar(.5).toArray());
@@ -41,7 +41,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
       uDepth: { value: depthTexture }, uResolution: { value: new THREE.Vector2() }, uTime: { value: 0 },
       uInvProjection: { value: new THREE.Matrix4() }, uCameraWorld: { value: new THREE.Matrix4() },
       uLo: { value: lo }, uHi: { value: hi },
-      uIntensity: { value: 1 }, uFuel: { value: Array(12).fill(1) }, uLogHeat: { value: Array(7).fill(1) },
+      uIntensity: { value: 1 }, uImpact: { value: 0 }, uFuel: { value: Array(12).fill(1) }, uLogHeat: { value: Array(7).fill(1) },
       uSources: { value: sources.map(s => new THREE.Vector4(...s.base.toArray(), s.height)) },
       uShapes: { value: sources.map(s => new THREE.Vector4(s.width, s.lean.x, s.lean.y, s.phase)) },
       uLogA: { value: logDefs.map(d => new THREE.Vector4(...d[0], d[2])) },
@@ -52,7 +52,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
       varying vec3 vPosition;
       uniform sampler2D uDepth;
       uniform vec2 uResolution;
-      uniform float uTime,uIntensity,uFuel[12],uLogHeat[7];
+      uniform float uTime,uIntensity,uImpact,uFuel[12],uLogHeat[7];
       uniform mat4 uInvProjection,uCameraWorld;
       uniform vec3 uLo,uHi;
       uniform vec4 uSources[12],uShapes[12],uLogA[7],uLogB[7];
@@ -69,7 +69,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
         for(int i=0;i<12;i++) {
           if(uFuel[i]<.015)continue;
           vec4 source=uSources[i],shape=uShapes[i];
-          float height=source.w*(1.+sin(clockTime*1.7+shape.w)*.055+sin(clockTime*3.1+shape.w*2.)*.025);
+          float height=source.w*(1.+sin(clockTime*1.7+shape.w)*.085+sin(clockTime*3.1+shape.w*2.)*.045+uImpact*.12);
           float t=(warp.y-source.y)/height;
           if(t>0. && t<1.) {
             vec2 center=source.xz+vec2(sin(t*6.7+shape.w-clockTime*1.3)*t*.23, sin(t*4.8+shape.w-clockTime*.9)*t*.17)+shape.yz*t*t;
@@ -80,7 +80,9 @@ export function createHybridFire(config, depthTexture, logDefs) {
             ${variant === 1 ? `float angle=atan(local.y,local.x);radius*=1.+sin(angle*3.+t*10.+shape.w-clockTime*1.9)*.14;` : ''}
             float d=length(local)/max(radius*${variant === 2 ? '1.2' : '1.0'},.005);
             float envelope=max(0.,1.-d)*min(1.,uFuel[i]*2.);
-            if(envelope>body){body=envelope;flameHeight=t;skin=d;}
+            if(envelope>body){flameHeight=t;skin=d;}
+            // Neighboring tongues merge softly while retaining transparent folds.
+            body=max(body,envelope)+min(body,envelope)*.12;
           }
         }
         if(body<.001)return vec3(0.);
@@ -90,16 +92,16 @@ export function createHybridFire(config, depthTexture, logDefs) {
         float turbulence=fbm(flow+vec3(7.,-11.,3.));
         float fine=n3(flow*2.73-8.);
         float edge=smoothstep(${variant === 2 ? '.065,.36' : '.015,.25'},body+(turbulence-.5)*${variant === 2 ? '.44' : '.18'});
-        float flameRoot=smoothstep(0.,.10,flameHeight);
+        float flameRoot=smoothstep(0.,.045,flameHeight);
         float volume=edge*flameRoot;
         ${variant === 1 ? `
           float sheet=exp(-pow((skin-(.53+sin(warp.y*7.+turbulence*5.-clockTime*2.)*.14))/.24,2.));
           volume*=.17+sheet*.75+turbulence*.15;
-          float heat=clamp(sheet*.46+body*.45+turbulence*.23-.08,0.,1.);
+          float heat=clamp(sheet*.38+body*.48+turbulence*.32-.09-flameHeight*.17,0.,1.);
         ` : `
-          float tear=smoothstep(.24,.57,turbulence+body*.20);
-          volume*=tear*(.35+fine*.7);
-          float heat=clamp(body*.68+turbulence*.50-.11,0.,1.);
+          float tear=smoothstep(.22,.55,turbulence+body*.24);
+          volume*=tear*(.4+fine*.6);
+          float heat=clamp(body*.72+turbulence*.50-.13-flameHeight*.22,0.,1.);
         `}
         return vec3(volume,heat,flameHeight);
       }
@@ -142,11 +144,15 @@ export function createHybridFire(config, depthTexture, logDefs) {
           float density=max(sampleField.x,contact.x);
           if(density<.002)continue;
           float heat=max(sampleField.y,contact.y);
-          vec3 color=mix(vec3(.95,.026,.001),vec3(1.72,.29,.008),smoothstep(.04,.45,heat));
-          color=mix(color,vec3(2.65,1.18,.19),smoothstep(.35,.80,heat));
-          color=mix(color,vec3(3.1,2.05,.70),smoothstep(.73,1.,heat));
-          float blue=(1.-smoothstep(.25,.54,p.y))*(1.-smoothstep(.20,.58,heat));
-          color=mix(color,vec3(.045,.16,.68),blue*.7);
+          // A broad heat palette: deep red wisps, copper folds, honey and ivory cores.
+          vec3 color=mix(vec3(.82,.008,.001),vec3(1.65,.15,.003),smoothstep(.02,.38,heat));
+          color=mix(color,vec3(2.5,.76,.055),smoothstep(.32,.69,heat));
+          color=mix(color,vec3(3.0,1.95,.60),smoothstep(.61,.88,heat));
+          color=mix(color,vec3(3.2,2.85,1.9),smoothstep(.86,1.,heat));
+          float root=(1.-smoothstep(.04,.17,sampleField.z))*step(.004,sampleField.x);
+          float blue=max(root*.65,contact.x*.8)*(1.-smoothstep(.35,.68,heat));
+          color=mix(color,vec3(.10,.24,1.15),blue*.62);
+          color*=1.+uImpact*.16;
           float alpha=1.-exp(-density*ds*${variant === 1 ? '4.25' : '4.3'});
           sum.rgb+=(1.-sum.a)*alpha*color;sum.a+=(1.-sum.a)*alpha;
           if(sum.a>.98)break;
