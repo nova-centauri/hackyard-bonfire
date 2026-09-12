@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createTwigSettling, twigBurnScale, updateTwigSettling } from '../src/twig-settling.js';
+import { createTwigInstances } from '../src/twig-render.js';
 
 const vector = (x, y, z) => new THREE.Vector3(x, y, z);
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, `${a} ≈ ${b}`);
 
-function twigStudy() {
+function twigStudy({ instanced = false } = {}) {
   const scene = new THREE.Scene(), twigs = new THREE.Group();
   const layers = { flames: new THREE.Group(), sparks: new THREE.Group() };
   scene.add(twigs, layers.flames, layers.sparks); twigs.position.y = -.16;
@@ -28,8 +29,10 @@ function twigStudy() {
   const flame = new THREE.Mesh(new THREE.SphereGeometry(.04).translate(...origin.toArray()), new THREE.MeshBasicMaterial());
   flame.userData.twigFlame = true; flame.position.copy(twigs.position); layers.flames.add(flame);
   scene.updateMatrixWorld(true);
+  // The scene mirrors the segments into an instanced draw before the settling scans the group.
+  const instances = instanced ? createTwigInstances(twigs, layers) : null;
   const state = createTwigSettling(twigs, layers), cycle = { seed: 42, resetSerial: 0, time: 0 };
-  return { state, cycle, twigs, main, fork, glow, flame, origin };
+  return { state, cycle, twigs, main, fork, glow, flame, origin, instances };
 }
 
 function ends(mesh) {
@@ -108,4 +111,23 @@ test('unsupported twigs begin falling immediately even before any fuel has burne
   assert.ok(ends(main)[1].y < start, 'the next frame begins a visible fall');
   updateTwigSettling(state, cycle, 1);
   assert.ok(ends(main)[1].y < .04); assert.equal(cycle.time, 0);
+});
+
+test('the instanced draw that mirrors the twigs is never mistaken for a twig, so the nest itself stays put', () => {
+  const { state, cycle, twigs, instances } = twigStudy({ instanced: true });
+  assert.ok(twigs.children.includes(instances.mesh), 'the instanced draw shares the twig group');
+  assert.equal(state.pieces.length, 2, 'one piece per trunk-and-fork pair, nothing for the instanced draw');
+  assert.ok(state.pieces.every(piece => piece.items.every(item => !item.object.isInstancedMesh)));
+  const identity = new THREE.Matrix4().toArray();
+  updateTwigSettling(state, cycle, 0);
+  cycle.time = 120; updateTwigSettling(state, cycle, 1); updateTwigSettling(state, cycle, 2.5);
+  instances.sync(); instances.mesh.updateMatrix();
+  assert.deepEqual(instances.mesh.matrix.toArray(), identity, 'the whole nest never rotates, shifts or lifts');
+  const expected = new THREE.Matrix4(), actual = new THREE.Matrix4();
+  instances.branches.forEach((branch, i) => {
+    const { radiusBottom, height } = branch.geometry.parameters;
+    expected.makeScale(radiusBottom, height, radiusBottom).premultiply(branch.matrix);
+    instances.mesh.getMatrixAt(i, actual);
+    actual.toArray().forEach((value, j) => near(value, expected.toArray()[j]));
+  });
 });

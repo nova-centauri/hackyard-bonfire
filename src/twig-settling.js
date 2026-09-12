@@ -19,7 +19,9 @@ function capture(object) {
 // rigid piece, including the separate spark and flame meshes attached to it.
 export function createTwigSettling(twigs, layers) {
   twigs.updateWorldMatrix(true, true);
-  const meshes = twigs.children.filter(child => child.isMesh), pieces = [];
+  // The instanced draw that mirrors the segments lives in this same group. It
+  // is a renderer, not a twig: treating it as one rotated the whole nest.
+  const meshes = twigs.children.filter(child => child.isMesh && !child.isInstancedMesh), pieces = [];
   for (let i = 0; i < meshes.length; i += 2) {
     const parts = meshes.slice(i, i + 2), [a, b] = segmentEnds(parts[0]);
     const axis = b.clone().sub(a).normalize();

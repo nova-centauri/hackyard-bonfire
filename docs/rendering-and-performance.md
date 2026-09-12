@@ -115,6 +115,10 @@ samples per frame and the awake fraction.
 
 - The point-light shadow renders six faces of every caster; on Ultra that is
   every frame. The instanced twigs cut its draw count by two thirds.
+- The instanced twig draw is a child of the twig group so it inherits the
+  group's visibility and local space. Anything that scans that group for
+  twigs (`createTwigSettling`) must skip instanced meshes; treating the draw
+  as a twig once rotated the entire nest onto its side.
 - The ray-marched fire is still the dominant GPU cost at any tier; the next
   lever, if needed, is rendering the volumetrics at half resolution with an
   upsample, which would need a separate pass rather than the current single

@@ -81,3 +81,8 @@ Done in this pass:
 - 2026-09-12 — Authored emissive masks wired into the burn shader's char
   glow behind a per-slot flag; verified headlessly (no shader errors, flag
   reaches the compiled programs).
+- 2026-09-12 — Fixed the twig nest tipping onto its side: the instanced
+  twig draw sits in the twig group and the settling scan mistook it for a
+  29th twig, rotating and lifting the whole nest within two seconds of every
+  fire. Settling now ignores instanced meshes; regression test mirrors the
+  scene's build order.
