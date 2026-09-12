@@ -97,10 +97,10 @@ Done in this pass:
   can catch, falling wood keeps its last resting pose for the burn, and new
   pieces are dropped onto the settled pile rather than onto one still in the
   air. Measured headlessly with the viewer loop: never cold over four
-  burn-hours at 30×, 60×, 300× and 1200× (flames present about 96% of the
-  time, at most five pieces on the bed); 10× hot through its first two hours
-  and 1× through its first hour when this was written. Before the fix the
-  same loop went cold at 70 burn-minutes at 1× and 81 at 30×.
+  burn-hours at 10×, 30×, 60×, 300× and 1200× (flames present 95–97% of the
+  time, bed heat never below 0.6, at most five pieces on the bed) and over
+  two burn-hours at 1× (flames 90% of the time). Before the fix the same
+  loop went cold at 70 burn-minutes at 1× and 81 at 30×.
 - 2026-09-12 — Fixed the twig nest tipping onto its side: the instanced
   twig draw sits in the twig group and the settling scan mistook it for a
   29th twig, rotating and lifting the whole nest within two seconds of every
