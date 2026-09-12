@@ -23,7 +23,7 @@ export function mountBurnPanel(viewer) {
         <div class="core-guidance"><span id="core-heat-note"></span><span id="core-burn-effect" title="Effect of core heat on fuel consumption. Each piece’s type, moisture, and density also affect how fast it burns."></span></div>
       </div>
       <div class="burn-meta">
-        <label class="feed-switch"><input id="auto-feed" type="checkbox" checked> Feed waiting fuel</label>
+        <label class="feed-switch" title="Add the waiting pieces one at a time, then keep the fire going with a fresh piece whenever it runs low"><input id="auto-feed" type="checkbox" checked> Keep the fire fed</label>
         <span id="feed-status"></span>
         <span class="burn-cadence">Speed changes the burn clock; flame motion stays natural.</span>
       </div>
@@ -71,7 +71,9 @@ export function mountBurnPanel(viewer) {
     document.querySelector('#add-log').disabled = !cycle.canAdd;
     const selectedFuel = document.querySelector('#fuel-type').value;
     document.querySelector('#add-log').title = cycle.canAdd ? selectedFuel ? `Add ${getFuelType(selectedFuel).label.toLowerCase()} to the fire bed` : 'Add the next waiting piece, or a fresh piece if the queue is empty' : 'All seven positions are occupied; wait for a piece to become ash';
-    document.querySelector('#feed-status').textContent = cycle.queued ? `${cycle.queued} waiting · ${cycle.autoFeed ? `next in ${formatTime(cycle.nextFeed - cycle.time)}` : 'feeding paused'}` : cycle.phase==='Cold fire bed' ? 'Fire is out · randomize to start again' : 'Feed complete · letting the fire burn down';
+    document.querySelector('#feed-status').textContent = cycle.queued ? `${cycle.queued} waiting · ${cycle.autoFeed ? `next in ${formatTime(cycle.nextFeed - cycle.time)}` : 'feeding paused'}`
+      : cycle.phase === 'Cold fire bed' ? 'Fire is out · randomize to start again'
+      : cycle.tending ? 'Tending · a fresh piece whenever the fire runs low' : 'Feeding paused · letting the fire burn down';
     document.querySelector('#burn-seed').textContent = `START ${cycle.seed.toString(16).toUpperCase().padStart(8, '0')}`;
     let queuedDelay = 0;
     cards.forEach((card, i) => {

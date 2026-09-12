@@ -107,15 +107,44 @@ test('accelerated time preserves the same fuel and heat integration', () => {
   assert.deepEqual(physicalState(realtime), physicalState(fast));
 });
 
-test('automatic feeding places one intact log at a time and stops after the finite queue', () => {
+test('automatic feeding places one intact log at a time, then keeps a modest fire tended for as long as the page is open', () => {
   const cycle = new BurnCycle(7), queued = cycle.queued;
   cycle.advance(Math.ceil(cycle.nextFeed * 2) / 2);
   const fresh = cycle.logs.filter(l => l.phase === 'fresh');
   assert.equal(fresh.length, 1); assert.equal(fresh[0].wood, 1); assert.equal(fresh[0].char, 0);
   assert.equal(cycle.queued, queued - 1);
-  cycle.advance(12000);
-  assert.equal(cycle.serial, 7); assert.equal(cycle.queued, 0);
-  assert.equal(cycle.events.filter(e => e.title.endsWith('added')).length, queued);
+  let tended = 0, maxWood = 0, maxPieces = 0;
+  for (let minute = 0; minute < 240; minute++) {
+    cycle.advance(60);
+    tended = cycle.logs.filter(l => l.tended).length + tended * 0;
+    maxWood = Math.max(maxWood, cycle.woodOnBed);
+    maxPieces = Math.max(maxPieces, cycle.logs.filter(l => l.phase !== 'queued' && l.phase !== 'ash').length);
+    assert.ok(cycle.coalHeat > .12, `the tended fire never goes cold (minute ${minute})`);
+  }
+  assert.equal(cycle.queued, 0);
+  assert.ok(cycle.serial > 7, 'fresh pieces keep arriving after the finite queue');
+  assert.ok(cycle.events.some(e => e.detail.includes('keeps it going')));
+  assert.ok(maxWood < 3.2, `the bed never piles high (${maxWood.toFixed(2)} log units at most)`);
+  assert.ok(maxPieces <= 5);
+  // Unchecking the switch lets the same fire burn all the way out.
+  cycle.setAutoFeed(false); cycle.advance(14400);
+  assert.equal(cycle.phase, 'Cold fire bed'); assert.equal(cycle.coalHeat, 0);
+});
+
+test('tending never adds wood to a roaring fire or a cold bed', () => {
+  const cycle = new BurnCycle(7);
+  while (cycle.queued) cycle.advance(60);
+  while (!cycle.logs.some(l => l.phase === 'ash')) cycle.advance(60);
+  assert.equal(cycle.tending, true, 'a free position and a warm bed make tending possible');
+  cycle.logs.forEach(l => { if (l.phase !== 'ash') l.wood = 1; }); cycle.updateSummary();
+  assert.equal(cycle.needsFuel, false, 'plenty of wood on the bed');
+  const cold = new BurnCycle(7);
+  while (cold.queued) cold.advance(60);
+  cold.setAutoFeed(false); cold.advance(20000);
+  assert.equal(cold.coalHeat, 0); assert.ok(cold.canAdd);
+  cold.setAutoFeed(true); assert.equal(cold.tending, false);
+  const serial = cold.serial; cold.advance(3600);
+  assert.equal(cold.serial, serial, 'no wood is wasted on a cold bed');
 });
 
 test('a dry fresh log can ignite from retained coals after all visible flame is gone', () => {
@@ -249,7 +278,9 @@ test('kindling catches first and stumps catch last on an otherwise identical coa
 
 test('every explicit fuel type can reuse an ash slot but remains unlit on a cold bed', () => {
   for (const fuelType of Object.keys(FUEL_TYPES)) {
-    const cycle = new BurnCycle(42); cycle.advance(12000);
+    const cycle = new BurnCycle(42);
+    while (cycle.queued) cycle.advance(60);
+    cycle.setAutoFeed(false); cycle.advance(12000);
     const beforeAsh = cycle.ashMass, serial = cycle.serial;
     assert.equal(cycle.coalHeat, 0); assert.equal(cycle.queued, 0);
     assert.equal(cycle.addLog(fuelType), true);
@@ -265,6 +296,8 @@ test('every explicit fuel type can reuse an ash slot but remains unlit on a cold
 test('complete seeded cycles shed char, leave ash, and extinguish without negative fuel', () => {
   for (let seed = 1; seed <= 32; seed++) {
     const cycle = new BurnCycle(seed);
+    while (cycle.queued) cycle.advance(60);
+    cycle.setAutoFeed(false);
     for (let minute = 0; minute < 200; minute++) {
       cycle.advance(60);
       assert.ok(Number.isFinite(cycle.coalHeat) && cycle.coalHeat >= 0 && cycle.coalHeat <= 1);

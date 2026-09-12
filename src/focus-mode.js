@@ -1,5 +1,5 @@
 // Keep the scene, camera and sound alive while the surrounding interface rests.
-export function mountFocusMode(viewer) {
+export function mountFocusMode(viewer, { initial = false, onChange } = {}) {
   const button = document.querySelector('#focus-mode');
   const restore = document.querySelector('#restore-menus');
   const canvas = viewer.renderer.domElement;
@@ -39,9 +39,12 @@ export function mountFocusMode(viewer) {
     // Edge-to-edge fire earns a slightly deeper vignette.
     viewer.setVignette?.(active ? .34 : .24);
     viewer.resize();
+    onChange?.(active);
   }
 
   button.addEventListener('click', () => setFocusMode(true));
+  // A viewer who left in focus mode comes back to the fire, not the menus.
+  if (initial) setFocusMode(true);
   restore.addEventListener('click', () => setFocusMode(false));
   document.addEventListener('pointermove', revealGear, { passive: true });
   document.documentElement.addEventListener('pointerenter', revealGear, { passive: true });
