@@ -43,15 +43,14 @@ export class BurnCycle {
     // Auto-feed stays mostly wood; scrap shows up now and then. The focus-mode
     // button picks uniformly so cardboard and newspaper actually appear.
     const roll = this.fuelRandom();
-    return roll < .42 ? 'log' : roll < .64 ? 'small-log' : roll < .78 ? 'kindling'
-      : roll < .88 ? 'pallet' : roll < .94 ? 'plank' : roll < .97 ? 'cardboard'
-      : roll < .985 ? 'newspaper' : 'stump';
+    return roll < .44 ? 'log' : roll < .66 ? 'small-log' : roll < .82 ? 'kindling'
+      : roll < .90 ? 'pallet' : roll < .97 ? 'plank' : 'stump';
   }
   makeLog(slot, initial = false, fuelType = this.randomFuelType()) {
-    const r = this.random, type = getFuelType(fuelType), wood = initial ? .24 + r() * .7 : 1;
-    // Burning logs have already dried; waiting wood spans seasoned to wet.
-    // Paper starts drier; each kind carries its own range.
-    const moisture = initial ? .008 + r() * .034 : type.moistureMin + r() * type.moistureSpan;
+    const r = this.random, wood = initial ? .24 + r() * .7 : 1;
+    // Burning logs have already dried; waiting logs span seasoned to wet wood.
+    // Paper still dries and burns faster via its heat and burn rates.
+    const moisture = initial ? .008 + r() * .034 : .07 + r() * .28;
     return { slot, id: ++this.serial, fuelType, phase: initial ? (wood < .45 ? 'charred' : 'burning') : 'queued',
       wood, char: initial ? Math.min(1 - wood, .07 + (1 - wood) * .16) : 0, ash: initial ? (1 - wood) * .1 : 0,
       moisture, initialMoisture: moisture, temperature: initial ? .72 + r() * .2 : .025,

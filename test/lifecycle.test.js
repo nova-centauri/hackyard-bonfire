@@ -32,7 +32,7 @@ test('every log carries its own moisture and initial moisture survives drying', 
   for (const log of cycle.logs) {
     assert.ok(log.moisture > 0 && log.moisture < 1);
     assert.equal(log.initialMoisture, log.moisture);
-    if (log.phase === 'queued') assert.ok(log.moisture >= getFuelType(log.fuelType).moistureMin - 1e-12);
+    if (log.phase === 'queued') assert.ok(log.moisture >= .07);
     else assert.ok(log.moisture < .055);
   }
   const initialMoistures = cycle.logs.map(log => log.initialMoisture);
@@ -207,7 +207,9 @@ test('a dry fresh log can ignite from retained coals after all visible flame is 
 });
 
 test('cold coals cannot ignite new wood and replenishing a slot retains its ash', () => {
-  const cycle = new BurnCycle(42); cycle.advance(12000);
+  const cycle = new BurnCycle(42);
+  while (cycle.queued) cycle.advance(60);
+  cycle.setAutoFeed(false); cycle.advance(12000);
   assert.equal(cycle.coalHeat, 0); assert.equal(cycle.flame, 0);
   assert.equal(cycle.addLog(), true);
   const added = cycle.logs.find(l => l.phase === 'fresh');
@@ -264,11 +266,11 @@ test('seeded piles keep solid supports and lighter fuel, with occasional planks,
   }
   assert.ok(counts.log / samples > .35);
   assert.ok(counts['small-log'] > counts.plank && counts.kindling > counts.plank);
-  assert.ok(counts.plank / samples > .03 && counts.plank / samples < .10);
-  assert.ok(counts.pallet / samples > .06 && counts.pallet / samples < .16);
-  assert.ok(counts.cardboard / samples > .01 && counts.cardboard / samples < .06);
-  assert.ok(counts.newspaper > 0 && counts.newspaper / samples < .04);
-  assert.ok(counts.stump / samples > .008 && counts.stump / samples < .055);
+  assert.ok(counts.plank / samples > .04 && counts.plank / samples < .12);
+  assert.ok(counts.pallet / samples > .04 && counts.pallet / samples < .14);
+  assert.equal(counts.cardboard, 0);
+  assert.equal(counts.newspaper, 0);
+  assert.ok(counts.stump / samples > .01 && counts.stump / samples < .055);
 });
 
 test('explicit feeds select one waiting piece and reject invalid categories without changing the cycle', () => {
@@ -298,7 +300,11 @@ test('category selection preserves the seeded physical random stream and replace
     cycle.setAutoFeed(false);
     for (const log of cycle.logs) { log.phase = 'ash'; log.flame = 0; }
   }
-  for (const fuelType of Object.keys(FUEL_TYPES)) {
+  for (const [index, fuelType] of Object.keys(FUEL_TYPES).entries()) {
+    if (index >= 7) {
+      mixed.logs[index % 7].phase = 'ash'; mixed.logs[index % 7].flame = 0;
+      standard.logs[index % 7].phase = 'ash'; standard.logs[index % 7].flame = 0;
+    }
     assert.equal(mixed.addLog(fuelType), true);
     assert.equal(standard.addLog('log'), true);
     assert.deepEqual(mixed.logs.map(withoutType), standard.logs.map(withoutType));

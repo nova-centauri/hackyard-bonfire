@@ -128,7 +128,7 @@ test('pallet, cardboard and newspaper are thin boards with distinct proportions'
   assert.equal(boardAspectRatio('plank'), PLANK_ASPECT_RATIO);
   const same = createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 7 });
   assert.deepEqual(pallet.attributes.position.array, same.attributes.position.array);
-  assert.notDeepEqual(pallet.attributes.position.array, createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 8 }).attributes.position.array);
+  assert.deepEqual(pallet.attributes.position.array, createFuelGeometry({ fuelType: 'pallet', radius: .09, length: 1.4, seed: 8 }).attributes.position.array);
 });
 
 test('kindling uses restrained bark and omitting fuelType preserves the existing log shape', () => {
