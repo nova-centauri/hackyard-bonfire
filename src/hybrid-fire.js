@@ -41,6 +41,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
       uDepth: { value: depthTexture }, uResolution: { value: new THREE.Vector2() }, uTime: { value: 0 },
       uInvProjection: { value: new THREE.Matrix4() }, uCameraWorld: { value: new THREE.Matrix4() },
       uLo: { value: lo }, uHi: { value: hi },
+      uIntensity: { value: 1 }, uFuel: { value: Array(12).fill(1) }, uLogHeat: { value: Array(7).fill(1) },
       uSources: { value: sources.map(s => new THREE.Vector4(...s.base.toArray(), s.height)) },
       uShapes: { value: sources.map(s => new THREE.Vector4(s.width, s.lean.x, s.lean.y, s.phase)) },
       uLogA: { value: logDefs.map(d => new THREE.Vector4(...d[0], d[2])) },
@@ -51,7 +52,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
       varying vec3 vPosition;
       uniform sampler2D uDepth;
       uniform vec2 uResolution;
-      uniform float uTime;
+      uniform float uTime,uIntensity,uFuel[12],uLogHeat[7];
       uniform mat4 uInvProjection,uCameraWorld;
       uniform vec3 uLo,uHi;
       uniform vec4 uSources[12],uShapes[12],uLogA[7],uLogB[7];
@@ -59,13 +60,14 @@ export function createHybridFire(config, depthTexture, logDefs) {
 
       // The volume follows the ink silhouettes; interior structure is turbulent gas.
       vec3 field(vec3 p) {
-        float clockTime=uTime*${variant === 2 ? '1.15' : '.72'};
+        float clockTime=uTime*1.15;
         vec3 drift=vec3(clockTime*.13,-clockTime*1.2,clockTime*.08);
         vec3 coarse=vec3(n3(p*2.6+drift+3.1),n3(p*2.6+drift+18.4),n3(p*2.6+drift-12.7))-.5;
         vec3 warp=p;
         warp.xz+=coarse.xz*${variant === 2 ? '.15' : '.065'};
         float body=0., flameHeight=0., skin=0.;
         for(int i=0;i<12;i++) {
+          if(uFuel[i]<.015)continue;
           vec4 source=uSources[i],shape=uShapes[i];
           float height=source.w*(1.+sin(clockTime*1.7+shape.w)*.055+sin(clockTime*3.1+shape.w*2.)*.025);
           float t=(warp.y-source.y)/height;
@@ -77,7 +79,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
             vec2 local=(warp.xz-center)/vec2(1.,.6);
             ${variant === 1 ? `float angle=atan(local.y,local.x);radius*=1.+sin(angle*3.+t*10.+shape.w-clockTime*1.9)*.14;` : ''}
             float d=length(local)/max(radius*${variant === 2 ? '1.2' : '1.0'},.005);
-            float envelope=max(0.,1.-d);
+            float envelope=max(0.,1.-d)*min(1.,uFuel[i]*2.);
             if(envelope>body){body=envelope;flameHeight=t;skin=d;}
           }
         }
@@ -108,6 +110,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
         float density=0.,heat=0.;
         float burningPatch=smoothstep(.40,.72,fbm(p*8.+vec3(13.,13.-uTime*2.8,13.)));
         for(int i=0;i<7;i++) {
+          if(uLogHeat[i]<.02)continue;
           vec3 a=uLogA[i].xyz,b=uLogB[i].xyz,axis=b-a;
           float t=clamp(dot(p-a,axis)/dot(axis,axis),0.,1.);
           vec3 center=mix(a,b,t),q=p-center;
@@ -115,12 +118,13 @@ export function createHybridFire(config, depthTexture, logDefs) {
           float surface=length(q)-radius;
           float upper=smoothstep(-.05,.22,q.y);
           float d=exp(-pow((surface-.032)/.052,2.))*upper*burningPatch*smoothstep(.04,.24,t)*(1.-smoothstep(.80,.98,t));
-          density=max(density,d*.34);heat=max(heat,d*.52);
+          density=max(density,d*.34*uLogHeat[i]);heat=max(heat,d*.52*uLogHeat[i]);
         }
         return vec2(density,heat);
       }
 
       void main() {
+        if(uIntensity<.001)discard;
         vec3 ro=cameraPosition,rd=normalize(vPosition-ro);
         vec2 hit=boxHit(ro,rd,uLo,uHi);float start=max(hit.x,0.),end=hit.y;
         vec2 screen=gl_FragCoord.xy/uResolution;

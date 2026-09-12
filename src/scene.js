@@ -11,6 +11,9 @@ import { createVolume } from './volume.js';
 import { addStylizedFire } from './stylized.js';
 import { createHybridFire } from './hybrid-fire.js';
 import { createMotionState, updateStudyMotion } from './motion.js';
+import { BurnCycle, SPEEDS } from './lifecycle.js';
+import { addDirtClearing } from './ground.js';
+import { burningMaterial, createBurnVisuals, updateBurnVisuals } from './burn-visuals.js';
 
 const UP=new THREE.Vector3(0,1,0);
 const V=(x,y,z)=>new THREE.Vector3(x,y,z);
@@ -33,8 +36,14 @@ function branch(scene,a,b,r,material,sides=7) {
 export class BonfireViewer {
  constructor(container) {
   this.container=container;this.scenes=new Map();this.cloud=cloudTexture();this.detail='full';
-  this.paused=false;this.frameCount=0;this.depthDirty=true;this.lastTick=null;this.lastDraw=0;this.needsRender=false;
+  this.paused=false;this.speed=1;this.frameCount=0;this.depthDirty=true;this.lastTick=null;this.lastDraw=0;this.needsRender=false;this.lastShadow=0;
   this.renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance',preserveDrawingBuffer:true});
+  this.shaderErrors=[];
+  this.renderer.debug.onShaderError=(gl,program,vertex,fragment)=>{
+    const detail=[gl.getProgramInfoLog(program),gl.getShaderInfoLog(vertex),gl.getShaderInfoLog(fragment)].filter(Boolean).join('\n');
+    this.shaderErrors.push(detail);console.error('Bonfire shader compilation failed:',detail);
+    this.onError?.('A fire shader could not load. Please try a browser with WebGL 2 hardware acceleration.');
+  };
   this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.65));
   this.renderer.toneMapping=THREE.ACESFilmicToneMapping;
   this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=THREE.PCFSoftShadowMap;
@@ -84,6 +93,7 @@ export class BonfireViewer {
   this.config=config;
   if(!this.scenes.has(config.id))this.scenes.set(config.id,this.buildScene(config));
   this.current=this.scenes.get(config.id);this.renderPass.scene=this.current.scene;
+  this.current.burnSpeed=this.speed;
   this.lastTick=null;this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;
   const pixelRatio=Math.min(devicePixelRatio,config.animated?1.25:1.65);
   this.renderer.setPixelRatio(pixelRatio);this.composer.setPixelRatio(pixelRatio);
@@ -91,6 +101,7 @@ export class BonfireViewer {
   this.finish.uniforms.uMode.value=config.mode;
   this.resize();this.setView('full');
   this.onPlaybackChange?.();
+  this.onLifecycleChange?.();
  }
  setView(view) {
   if(!this.config)return;this.detail=view;
@@ -107,7 +118,24 @@ export class BonfireViewer {
    this.queueRender();
  }
  setPaused(paused) {
-  this.paused=paused;this.lastTick=null;this.onPlaybackChange?.();this.queueRender();
+  this.paused=paused;this.lastTick=null;this.onPlaybackChange?.();this.onLifecycleChange?.();this.queueRender();
+ }
+ setSpeed(speed) {
+  if(SPEEDS.includes(speed)){this.speed=speed;if(this.current)this.current.burnSpeed=speed;this.lastTick=null;this.onLifecycleChange?.();}
+ }
+ resetFire() {
+  if(!this.current?.cycle)return;
+  const seed=crypto.getRandomValues(new Uint32Array(1))[0];
+  this.current.cycle.reset(seed);this.current.animationTime=0;this.lastTick=null;
+  this.refreshBurn();
+ }
+ addLog() {
+  if(this.current?.cycle?.addLog())this.refreshBurn();
+ }
+ refreshBurn() {
+  updateBurnVisuals(this.current,true);updateStudyMotion(this.current);
+  this.depthDirty=true;this.renderer.shadowMap.needsUpdate=true;
+  this.onLifecycleChange?.();this.queueRender();
  }
  queueRender() {
   this.needsRender=true;this.scheduleFrame();
@@ -122,7 +150,15 @@ export class BonfireViewer {
   if(this.needsRender||(running&&now-this.lastDraw>=1000/30-.5)){
     if(running&&this.current){
       const delta=this.lastTick===null?0:Math.min((now-this.lastTick)/1000,.12);
-      this.current.animationTime+=delta;updateStudyMotion(this.current);
+      this.current.animationTime+=delta;
+      if(this.current.cycle){
+        this.current.cycle.advance(delta*this.speed);
+        if(updateBurnVisuals(this.current)){
+          this.depthDirty=true;
+          if(now-this.lastShadow>200){this.renderer.shadowMap.needsUpdate=true;this.lastShadow=now;}
+        }
+      }
+      updateStudyMotion(this.current);
     }
     this.lastTick=running?now:null;this.lastDraw=now;this.needsRender=false;
     this.render();
@@ -133,7 +169,7 @@ export class BonfireViewer {
   if(!this.current)return;
   const {scene,volumes,layers}=this.current;
   this.camera.updateMatrixWorld();
-  // The fuel bed is stationary: only rebuild its depth when the camera or scene changes.
+  // Rebuild depth when the camera moves or a log burns, settles, or sheds char.
   if(this.depthDirty){
     const hidden=[layers.flames,layers.smoke,layers.sparks,layers.steam],vis=hidden.map(g=>g.visible);
     hidden.forEach(g=>g.visible=false);
@@ -158,6 +194,7 @@ export class BonfireViewer {
   const dirtGeo=new THREE.CylinderGeometry(2.32,2.5,.16,mode===1?11:70);
   if(mode===0||mode===4){const p=dirtGeo.attributes.position;for(let i=0;i<p.count;i++){const a=Math.atan2(p.getZ(i),p.getX(i)),f=1+Math.sin(a*7)*.024+Math.sin(a*13)*.014;p.setX(i,p.getX(i)*f);p.setZ(i,p.getZ(i)*f);}dirtGeo.computeVertexNormals();}
   const dirt=mesh(opaque,dirtGeo,dirtMat,V(0,-.09,0));
+  if(hybrid){dirt.visible=false;addDirtClearing(opaque,config.seed);}
   if(mode===3)dirt.material=new THREE.MeshStandardMaterial({color:'#121820',roughness:.23,metalness:.8});
   const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':'#9cadc6',mode===2&&!hybrid?'#827f72':'#211915',hybrid?1.0:mode===2?2.3:.65);scene.add(ambient);
   const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':'#b2c9e4',hybrid?1.55:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=true;
@@ -180,7 +217,7 @@ export class BonfireViewer {
    [[.85,.52,.95],[-.22,1.62,-.12],.22],
   ];
   if(mode===4){for(let i=3;i<logDefs.length;i++){logDefs[i][0][1]*=.8;logDefs[i][1][1]*=.58;}}
-  const flakeGeometries=[];
+  const flakeGeometries=[],logMeshes=[];
   const ashMat=new THREE.MeshStandardMaterial({color:mode===2?'#dbd5c7':'#888379',roughness:1,flatShading:true});
   for(let li=0;li<logDefs.length;li++) {
     const [aa,bb,radius]=logDefs[li],a=new THREE.Vector3(...aa),b=new THREE.Vector3(...bb);
@@ -193,8 +230,12 @@ export class BonfireViewer {
       pos.setX(i,pos.getX(i)*f);pos.setZ(i,pos.getZ(i)*f);
     }
     geo.computeVertexNormals();
-    const log=mesh(opaque,geo,[barkMat,endMat],a.clone().add(b).multiplyScalar(.5));log.quaternion.setFromUnitVectors(UP,dir.clone().normalize());
+    const burnUniforms={uWood:{value:1},uChar:{value:0},uHeat:{value:0}};
+    const materials=hybrid?[burningMaterial(barkMat,burnUniforms),burningMaterial(endMat,burnUniforms,true)]:[barkMat,endMat];
+    const log=mesh(opaque,geo,materials,a.clone().add(b).multiplyScalar(.5));log.quaternion.setFromUnitVectors(UP,dir.clone().normalize());
+    log.userData.length=length;log.userData.burnUniforms=burnUniforms;logMeshes.push(log);
     log.updateMatrixWorld();
+    log.userData.baseInverse=log.matrixWorld.clone().invert();
     if(mode===2){
       const outline=new THREE.LineSegments(new THREE.EdgesGeometry(geo,27),new THREE.LineBasicMaterial({color:'#342e29',transparent:true,opacity:.85}));log.add(outline);
       for(let j=0;j<17;j++){
@@ -203,15 +244,21 @@ export class BonfireViewer {
         line(log,points,'#342e25',.58);
       }
     }
+    const localChips=[];
     for(let k=0;k<(mode===1?10:45);k++){
       const theta=rand()*Math.PI*2,y=(rand()-.5)*length*.97;
       const chip=new THREE.DodecahedronGeometry(1,0);
       const radiusAt=radius*(.94-y/length*.1);
       const obj=new THREE.Object3D();obj.position.set(Math.cos(theta)*radiusAt,y,Math.sin(theta)*radiusAt);
       obj.scale.set(.022+rand()*.025,.025+rand()*.07,.012+rand()*.014);obj.rotation.set(0,-theta,rand()*.4);
-      obj.updateMatrix();chip.applyMatrix4(obj.matrix).applyMatrix4(log.matrixWorld);flakeGeometries.push(chip);
+      obj.updateMatrix();chip.applyMatrix4(obj.matrix);
+      if(hybrid)localChips.push(chip);else{chip.applyMatrix4(log.matrixWorld);flakeGeometries.push(chip);}
     }
-    if(li<3){
+    if(hybrid){
+      log.userData.charChips=mesh(log,mergeGeometries(localChips),new THREE.MeshStandardMaterial({color:'#534d42',roughness:1,flatShading:true}));
+      localChips.forEach(g=>g.dispose());
+    }
+    if(li<3||hybrid){
       const end=a.clone().addScaledVector(dir.clone().normalize(),-.018);
       for(let k=0;k<15;k++){
         const t=k/14;
@@ -222,14 +269,16 @@ export class BonfireViewer {
       }
     }
   }
-  mesh(opaque,mergeGeometries(flakeGeometries),new THREE.MeshStandardMaterial({color:mode===2?'#746d5f':mode===4?'#a29b88':'#39362f',roughness:1,flatShading:true}));
+  if(flakeGeometries.length)mesh(opaque,mergeGeometries(flakeGeometries),new THREE.MeshStandardMaterial({color:mode===2?'#746d5f':mode===4?'#a29b88':'#39362f',roughness:1,flatShading:true}));
   flakeGeometries.forEach(g=>g.dispose());
   const coalGeo=new THREE.DodecahedronGeometry(1,mode===1?0:1);
   const coalMat=new THREE.MeshStandardMaterial({color:'#6b5950',emissive:'#ff5a09',emissiveIntensity:mode===4?2.1:1.3,roughness:.9,flatShading:true});
+  coalMat.userData.bedAsh={value:0};
   coalMat.onBeforeCompile=shader=>{
+    shader.uniforms.uBedAsh=coalMat.userData.bedAsh;
     shader.vertexShader='varying vec3 vCoalSurface,vCoalOffset;varying float vCoalHeat;\n'+shader.vertexShader;
     shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nvCoalSurface=position;vCoalOffset=instanceMatrix[3].xyz*2.73;vCoalHeat=.12+instanceColor.r*1.45;');
-    shader.fragmentShader=`varying vec3 vCoalSurface,vCoalOffset;varying float vCoalHeat;
+    shader.fragmentShader=`varying vec3 vCoalSurface,vCoalOffset;varying float vCoalHeat;uniform float uBedAsh;
       vec3 coalHash(vec3 p){return fract(sin(vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6))))*43758.5453);}
       vec2 coalCells(vec3 p){vec3 cell=floor(p),f=fract(p);float first=8.,second=8.;for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++)for(int z=-1;z<=1;z++){vec3 b=vec3(float(x),float(y),float(z)),r=b+coalHash(cell+b)-f;float d=dot(r,r);if(d<first){second=first;first=d;}else if(d<second)second=d;}return vec2(sqrt(first),sqrt(second));}
     `+shader.fragmentShader;
@@ -242,6 +291,7 @@ export class BonfireViewer {
       float crust=smoothstep(.5,.86,cells.x)*smoothstep(-.5,.4,cp.y);
       totalEmissiveRadiance*= (.008+crack*.8)*hot*(1.-crust*.75)*vCoalHeat;
       diffuseColor.rgb=mix(diffuseColor.rgb*(.55+smoothstep(.02,.22,vein)*.6),vec3(.21,.18,.14),crust*.8);
+      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.26,.25,.22),uBedAsh*.82);
     `);
   };
   const coals=new THREE.InstancedMesh(coalGeo,coalMat,210),obj=new THREE.Object3D();
@@ -273,10 +323,11 @@ export class BonfireViewer {
     const s=.004+rand()*.035;obj.scale.set(s,s*.35,s*1.5);obj.updateMatrix();debris.setMatrixAt(i,obj.matrix);
   }opaque.add(debris);
   const twigMat=new THREE.MeshStandardMaterial({color:mode===2?'#32291f':'#161410',roughness:1,emissive:'#7d1d05',emissiveIntensity:.55});
+  const twigs=new THREE.Group();opaque.add(twigs);
   for(let k=0;k<26;k++){
     const a=V((rand()-.5)*2.9,.13+rand()*.3,(rand()-.5)*2.7),b=a.clone().add(V((rand()-.5)*.95,.15+rand()*.7,(rand()-.5)*.75));
-    branch(opaque,a,b,.016+rand()*.018,twigMat);
-    const fork=a.clone().lerp(b,.58);branch(opaque,fork,b.clone().add(V(.2,.12,-.18)),.009,twigMat,5);
+    branch(twigs,a,b,.016+rand()*.018,twigMat);
+    const fork=a.clone().lerp(b,.58);branch(twigs,fork,b.clone().add(V(.2,.12,-.18)),.009,twigMat,5);
     if(k<10){
       for(let j=0;j<4;j++){
         const t=(j+.4)/4,p=a.clone().lerp(b,t);
@@ -287,7 +338,7 @@ export class BonfireViewer {
   }
   for(let j=0;j<2;j++){
     const a=V(-.54+j*.61,.22,1.18-j*.15),b=a.clone().add(V(.25,.36,-.61));
-    branch(opaque,a,b,.023,twigMat);branch(opaque,a.clone().lerp(b,.55),b.clone().add(V(.15,.09,.07)),.013,twigMat);
+    branch(twigs,a,b,.023,twigMat);branch(twigs,a.clone().lerp(b,.55),b.clone().add(V(.15,.09,.07)),.013,twigMat);
   }
   if(hybrid){const fire=createHybridFire(config,this.depthTarget.depthTexture,logDefs);layers.flames.add(fire);volumes.push(fire);}
   else if(mode===0||mode===4){const fire=createVolume('fire',config,this.depthTarget.depthTexture);layers.flames.add(fire);volumes.push(fire);}
@@ -307,8 +358,13 @@ export class BonfireViewer {
     const streak=line(layers.sparks,points,new THREE.Color(2.4,.65,.1),.7);
     streak.userData.streak={y,phase:y/5.3,index:k};
   }
-  const study={scene,opaque,layers,volumes,logDefs,config,animationTime:0};
+  const study={scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0};
   if(config.animated)study.motion=createMotionState(layers,sparks,[light,coreLight],coalMat,barkMat);
+  if(hybrid){
+    study.flameSources=volumes.find(v=>v.material.uniforms.uSources).material.uniforms.uSources.value.map(s=>s.clone());
+    study.cycle=new BurnCycle(8108);study.burnVisuals=createBurnVisuals(study);
+    updateBurnVisuals(study,true);updateStudyMotion(study);
+  }
   return study;
  }
 }

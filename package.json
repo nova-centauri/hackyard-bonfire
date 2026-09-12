@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5186 --strictPort",
     "build": "vite build",
+    "test": "node --test",
     "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": { "three": "0.179.1" },

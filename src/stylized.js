@@ -101,10 +101,10 @@ export function addStylizedFire(layers,config,logDefs) {
   }
   const path=new THREE.CatmullRomCurve3(points),geo=ribbonGeometry(path,.045+rand()*.045,rand()*3,28);
   const mat=new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,
-   uniforms:{uInk:{value:mode===2?1:0},uTime:{value:0}},
+   uniforms:{uInk:{value:mode===2?1:0},uTime:{value:0},uLife:{value:1}},
    vertexShader:'varying vec2 vUv;uniform float uTime;void main(){vUv=uv;vec3 p=position;float phase=position.y*7.;p.x+=(sin(phase-uTime*2.2)-sin(phase))*uv.y*uv.y*.03;p.z+=(cos(phase-uTime*1.7)-cos(phase))*uv.y*uv.y*.02;gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.);}',
-   fragmentShader:`varying vec2 vUv;uniform float uInk,uTime;void main(){float edge=pow(max(0.,1.-abs(vUv.x*2.-1.)),.65);float alpha=edge*.73*(1.-smoothstep(.7,1.,vUv.y));alpha*=1.+(sin(vUv.y*14.-uTime*4.)-sin(vUv.y*14.))*.12;vec3 c=mix(vec3(.1,.22,1.1),vec3(2.,.65,.045),smoothstep(.02,.28,vUv.y));c=mix(c,vec3(2.2,1.3,.3),edge*.6);c=mix(c,vec3(1.,.4,.07),uInk);gl_FragColor=vec4(c,alpha);}`});
-  const m=new THREE.Mesh(geo,mat);m.renderOrder=3;layers.flames.add(m);
+   fragmentShader:`varying vec2 vUv;uniform float uInk,uTime,uLife;void main(){float edge=pow(max(0.,1.-abs(vUv.x*2.-1.)),.65);float alpha=edge*.73*(1.-smoothstep(.7,1.,vUv.y));alpha*=1.+(sin(vUv.y*14.-uTime*4.)-sin(vUv.y*14.))*.12;vec3 c=mix(vec3(.1,.22,1.1),vec3(2.,.65,.045),smoothstep(.02,.28,vUv.y));c=mix(c,vec3(2.2,1.3,.3),edge*.6);c=mix(c,vec3(1.,.4,.07),uInk);gl_FragColor=vec4(c,alpha*uLife);}`});
+  const m=new THREE.Mesh(geo,mat);m.renderOrder=3;m.userData.logSlot=i%logDefs.length;layers.flames.add(m);
  }
  // Two forked twigs are entirely sheathed in flame, including their tips.
  for(let j=0;j<2;j++){
@@ -114,13 +114,13 @@ export function addStylizedFire(layers,config,logDefs) {
    const path=new THREE.CatmullRomCurve3([start,start.clone().lerp(end,.5).add(V(.018,.028,0)),end]);
    const shell=new THREE.TubeGeometry(path,22,fork===0?.046:.03,mode===1?5:10,false);
    const jacket=new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,depthWrite:false,
-    uniforms:{uTime:{value:0}},
+    uniforms:{uTime:{value:0},uLife:{value:1}},
     vertexShader:'varying vec2 vUv;varying vec3 vSurface;void main(){vUv=uv;vSurface=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-    fragmentShader:`varying vec2 vUv;varying vec3 vSurface;uniform float uTime;
+    fragmentShader:`varying vec2 vUv;varying vec3 vSurface;uniform float uTime,uLife;
       float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
-      void main(){vec2 drift=vec2(-uTime*1.7,uTime*.27);float n=noise(vUv*vec2(9.,4.)+drift)*.65+noise(vUv*vec2(19.,9.)+drift*2.)*.35;float a=.16+smoothstep(.25,.7,n)*.34;vec3 c=mix(vec3(.08,.16,.7),vec3(1.6,.52,.025),smoothstep(.22,.37,vSurface.y));c=mix(c,vec3(1.8,.85,.13),smoothstep(.55,.9,n)*.6);gl_FragColor=vec4(c,a);}`});
-   layers.flames.add(new THREE.Mesh(shell,jacket));
+      void main(){vec2 drift=vec2(-uTime*1.7,uTime*.27);float n=noise(vUv*vec2(9.,4.)+drift)*.65+noise(vUv*vec2(19.,9.)+drift*2.)*.35;float a=.16+smoothstep(.25,.7,n)*.34;vec3 c=mix(vec3(.08,.16,.7),vec3(1.6,.52,.025),smoothstep(.22,.37,vSurface.y));c=mix(c,vec3(1.8,.85,.13),smoothstep(.55,.9,n)*.6);gl_FragColor=vec4(c,a*uLife);}`});
+   const twigFlame=new THREE.Mesh(shell,jacket);twigFlame.userData.twigFlame=true;layers.flames.add(twigFlame);
   }
  }
 }

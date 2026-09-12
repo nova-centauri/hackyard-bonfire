@@ -18,7 +18,7 @@ export function createVolume(kind, config, depthTexture) {
  const geometry=new THREE.BoxGeometry(size.x,size.y,size.z);geometry.translate(...bounds[0].clone().add(bounds[1]).multiplyScalar(.5).toArray());
  const material=new THREE.ShaderMaterial({
    transparent:true,depthWrite:false,depthTest:false,side:THREE.BackSide,
-   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0}},
+   uniforms:{uDepth:{value:depthTexture},uResolution:{value:new THREE.Vector2()},uInvProjection:{value:new THREE.Matrix4()},uCameraWorld:{value:new THREE.Matrix4()},uLo:{value:bounds[0]},uHi:{value:bounds[1]},uSeed:{value:config.seed},uScale:{value:config.flameScale},uMode:{value:config.mode},uSmokeColor:{value:new THREE.Color(config.smoke)},uTime:{value:0},uSmokeAmount:{value:1}},
    vertexShader:`varying vec3 vPosition;void main(){vPosition=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
    fragmentShader:`precision highp float;
      varying vec3 vPosition;
@@ -26,7 +26,7 @@ export function createVolume(kind, config, depthTexture) {
      uniform vec2 uResolution;
      uniform mat4 uInvProjection,uCameraWorld;
      uniform vec3 uLo,uHi,uSmokeColor;
-     uniform float uSeed,uScale,uTime;
+     uniform float uSeed,uScale,uTime,uSmokeAmount;
      uniform int uMode;
      ${noise}
      float flame(vec3 p) {
@@ -71,7 +71,7 @@ export function createVolume(kind, config, depthTexture) {
          float radius=.38+h*.84;
          float envelope=exp(-dot(p.xz-center,p.xz-center)/(radius*radius)*2.2);
          float cloud=fbm(p*vec3(2.2,1.5,2.2)+vec3(uSeed+uTime*.035,-uTime*.58,0));
-         float density=max(0.,cloud-.29)*envelope*smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y))*(uMode==2?.55:uMode==3?.5:1.);
+         float density=max(0.,cloud-.29)*envelope*smoothstep(.9,2.8,p.y)*(1.-smoothstep(4.4,6.7,p.y))*(uMode==2?.55:uMode==3?.5:1.)*uSmokeAmount;
          float alpha=1.-exp(-density*stepSize*1.28);
          vec3 color=mix(vec3(.36,.23,.14),uSmokeColor,smoothstep(1.,3.8,p.y));
          color*=.8+cloud*.65;

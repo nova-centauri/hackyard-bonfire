@@ -1,6 +1,7 @@
 import './style.css';
 import { studies } from './styles.js';
 import { BonfireViewer } from './scene.js';
+import { mountBurnPanel } from './burn-panel.js';
 
 const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2c1 6-6 7-5 12 1-2 3-3 4-5 0 3 5 5 5 8a5 5 0 0 1-10 0c-2-6 4-9 6-15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -22,7 +23,7 @@ document.querySelector('#app').innerHTML=`
 
 let viewer,current;
 let selectedCollection='refinements';
-const collectionMemory={refinements:'living-contours',originals:'cinematic'};
+const collectionMemory={refinements:'wild-draft',originals:'cinematic'};
 function renderNavigation(collection){
  selectedCollection=collection;
  const entries=studies.filter(s=>(s.collection||'originals')===collection);
@@ -30,13 +31,13 @@ function renderNavigation(collection){
  nav.classList.toggle('refinements',collection==='refinements');
  nav.innerHTML=entries.map(s=>`<a href="/study/${s.id}" class="study-link" data-study="${s.id}" style="--card-accent:${s.color}"><span class="card-number">${s.number}</span><span class="card-copy"><span class="card-style">${s.style}</span><span class="card-name">${s.name}</span></span><span class="card-indicator" aria-hidden="true">↗</span></a>`).join('');
  document.querySelectorAll('[data-collection]').forEach(b=>{const active=b.dataset.collection===collection;b.classList.toggle('selected',active);b.setAttribute('aria-pressed',active);});
- document.querySelector('.collection-note').textContent=collection==='refinements'?'Ink & Wash foundation · Cinematic atmosphere':'The first five directions';
- document.querySelector('#edition').textContent=collection==='refinements'?'VOLUME 02':'VOLUME 01';
+ document.querySelector('.collection-note').textContent=collection==='refinements'?'Whole wood · flame · char · ash':'The first five directions';
+ document.querySelector('#edition').textContent=collection==='refinements'?'VOLUME 03':'VOLUME 01';
 }
 function resolveStudy(){
  const found=studies.find(s=>location.pathname===`/study/${s.id}`);
  if(found)return found;
- const fallback=studies.find(s=>s.id==='living-contours');
+ const fallback=studies.find(s=>s.id==='wild-draft');
  history.replaceState({},'',`/study/${fallback.id}`);
  return fallback;
 }
@@ -61,13 +62,17 @@ function loadStudy(config){
 }
 try{
  viewer=new BonfireViewer(document.querySelector('#canvas-container'));
+ const updateBurnPanel=mountBurnPanel(viewer);
+ viewer.onError=message=>{const loading=document.querySelector('#loading');loading.textContent=message;loading.hidden=false;};
  viewer.onPlaybackChange=updateMotionControl;
  viewer.onRender=()=>{
-  document.querySelector('#loading').hidden=true;
+  if(!viewer.shaderErrors.length)document.querySelector('#loading').hidden=true;
   const stage=document.querySelector('.stage');stage.dataset.ready='true';
   stage.dataset.animation=current?.animated?(viewer.paused?'paused':'playing'):'still';
   stage.dataset.sceneTime=viewer.current.animationTime.toFixed(3);
   stage.dataset.frameCount=viewer.frameCount;
+  stage.dataset.shaderErrors=viewer.shaderErrors.length;
+  updateBurnPanel();
  };
  loadStudy(resolveStudy());
  window.bonfire={viewer,studies,get current(){return current.id;}};
