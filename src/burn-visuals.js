@@ -39,10 +39,10 @@ export function createBurnVisuals(study) {
   const impactEmbers = new THREE.Points(emberGeometry, emberMaterial); impactEmbers.frustumCulled = false;
   impactEmbers.visible = false; flakes.visible = false;
   study.layers.sparks.add(impactEmbers);
-  return { flakes, fragments, fragmentTransforms: [], particles, impactEmbers, burnMap, embers: [], emberCursor: 0,
+  return { flakes, fragments, fragmentTransforms: [], fragmentDepthTransforms: [], particles, impactEmbers, burnMap, embers: [], emberCursor: 0,
     coalMatrices: study.coals.instanceMatrix.array.slice(), cursor: 0, lastShed: Array(7).fill(0), seed: null, rand,
     settling: null, impactEvents: [], impactSerial: 0, resetToken: null, impactPulse: 0,
-    logTransforms: [], coalScale: null, twigSettling: createTwigSettling(study.twigs, study.layers) };
+    logTransforms: [], logDepthTransforms: [], coalScale: null, twigSettling: createTwigSettling(study.twigs, study.layers) };
 }
 
 function emitImpact(view, impact, time, cycle) {
@@ -91,6 +91,19 @@ function changedValues(previous, values) {
   return !previous || values.some((value, i) => Math.abs(value - previous[i]) > 1e-6);
 }
 
+// Depth and shadow passes are expensive whole-scene renders. Burning wood
+// shrinks by microns per frame, which the matrices follow exactly, but only a
+// change large enough to move a pixel is worth re-rendering those passes for.
+const DEPTH_POSITION_TOLERANCE = 4e-4, DEPTH_SCALE_TOLERANCE = 2e-3;
+function visiblyMoved(previous, values, positionCount) {
+  if (!previous) return true;
+  for (let i = 0; i < values.length; i++) {
+    const tolerance = i < positionCount ? DEPTH_POSITION_TOLERANCE : DEPTH_SCALE_TOLERANCE;
+    if (Math.abs(values[i] - previous[i]) > tolerance) return true;
+  }
+  return false;
+}
+
 export function updateBurnVisuals(study, force = false) {
   const cycle = study.cycle, view = study.burnVisuals, t = study.animationTime;
   if (!cycle || !view) return false;
@@ -101,8 +114,8 @@ export function updateBurnVisuals(study, force = false) {
     view.resetToken = resetToken; view.seed = cycle.seed; view.particles.length = 0; view.embers.length = 0;
     view.impactEvents.length = 0; view.impactPulse = 0; view.lastShed = cycle.logs.map(log => log.shed);
     view.settling = createLogSettling(study.logDefs, cycle.seed, study.logMeshes.map(mesh => mesh.geometry?.userData.profile), study.rockColliders || []);
-    view.logTransforms.length = 0; view.coalScale = null;
-    view.fragmentTransforms.length = 0;
+    view.logTransforms.length = 0; view.logDepthTransforms.length = 0; view.coalScale = null;
+    view.fragmentTransforms.length = 0; view.fragmentDepthTransforms.length = 0;
     opaqueChanged = true;
   }
   const fire = study.volumes.find(volume => volume.material.uniforms.uSources);
@@ -142,7 +155,9 @@ export function updateBurnVisuals(study, force = false) {
       if (pose.quaternion) mesh.quaternion.copy(pose.quaternion); else mesh.quaternion.setFromUnitVectors(up, axis);
       mesh.scale.set(radiusScale, pose.length / mesh.userData.length, radiusScale);
       mesh.updateMatrixWorld();
-      if (live) opaqueChanged = true;
+      // Compare against the pose last handed to the depth pass, so slow creep
+      // still accumulates into a refresh instead of drifting unnoticed.
+      if (live && (opaqueChanged || visiblyMoved(view.logDepthTransforms[i], transform, 6))) { view.logDepthTransforms[i] = transform; opaqueChanged = true; }
     }
     const u = mesh.userData.burnUniforms;
     u.uWood.value = log.wood; u.uChar.value = log.char; u.uHeat.value = log.phase === 'queued' ? 0 : log.temperature;
@@ -194,20 +209,24 @@ export function updateBurnVisuals(study, force = false) {
   const fragments = view.settling.fragments || [];
   if (view.fragments.count !== fragments.length) opaqueChanged = true;
   view.fragments.count = fragments.length;
-  let fragmentsChanged = false;
+  let fragmentsChanged = false, fragmentsVisiblyChanged = false;
   for (let i = 0; i < fragments.length; i++) {
     const fragment = fragments[i], transform = [...fragment.position.toArray(), ...fragment.quaternion.toArray(), fragment.radius, fragment.length];
     if (changedValues(view.fragmentTransforms[i], transform)) {
       view.fragmentTransforms[i] = transform; fragmentsChanged = true;
       obj.position.copy(fragment.position); obj.quaternion.copy(fragment.quaternion); obj.scale.set(fragment.radius, fragment.length, fragment.radius);
       obj.updateMatrix(); view.fragments.setMatrixAt(i, obj.matrix);
+      if (visiblyMoved(view.fragmentDepthTransforms[i], transform, 3)) { view.fragmentDepthTransforms[i] = transform; fragmentsVisiblyChanged = true; }
     }
     view.fragments.geometry.attributes.instanceHeat.setX(i, fragment.heat);
   }
-  if (fragmentsChanged) { view.fragments.instanceMatrix.needsUpdate = true; opaqueChanged = true; }
+  if (fragmentsChanged) view.fragments.instanceMatrix.needsUpdate = true;
+  if (fragmentsVisiblyChanged) opaqueChanged = true;
   if (fragments.length) view.fragments.geometry.attributes.instanceHeat.needsUpdate = true;
   const coalScale = .28 + .72 * Math.sqrt(Math.min(1, cycle.coalMass / .5));
-  const coalsChanged = force || view.coalScale !== coalScale;
+  // The bed shrinks by a fraction of a percent per burn step; rebuild its
+  // matrices only once that adds up to something a pixel can show.
+  const coalsChanged = force || view.coalScale === null || Math.abs(view.coalScale - coalScale) > DEPTH_SCALE_TOLERANCE;
   for (let i = 0; coalsChanged && i < study.coals.count; i++) {
     const offset = i * 16;
     for (let j = 0; j < 16; j++) study.coals.instanceMatrix.array[offset + j] = view.coalMatrices[offset + j] * (j < 12 ? coalScale : 1);
