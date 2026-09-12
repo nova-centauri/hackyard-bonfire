@@ -46,7 +46,12 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
 - Two clocks: the burn clock (fixed 0.5 s steps, accelerated by the speed
   control) and the animation clock (real seconds). Never couple animation
   state (wind, flicker, poses) back into burn integration; the accelerated-
-  time equivalence test guards this.
+  time equivalence test guards this. The one sanctioned crossing is the
+  settled wood positions (`cycle.setLogPoses`), which shape where heat
+  reaches; a piece still falling keeps its last resting pose there. Anything
+  that changes the burn must also pass `test/tended-fire.test.js`, which runs
+  the viewer loop with real settling, since the standalone lifecycle tests
+  never see poses.
 - Everything is seeded and deterministic; tests rely on it.
 - Sleeping bodies are static: wake them explicitly (see `wake()` callers)
   before applying impulses.

@@ -720,7 +720,10 @@ export function updateLogSettling(state, cycle, time, groundHeight = () => 0) {
     updateMass(pose, mass * getFuelType(log.fuelType).mass * log.scale ** 3); syncPose(pose);
     if (pose.live && !pose.initialized) arrivals.push(pose);
   }
-  const existing = state.logs.filter(p => p.live && p.initialized);
+  // A new piece is dropped onto the settled pile. Pieces still falling from an
+  // earlier drop are not supports: at 1200× fresh wood arrives faster than it
+  // can fall, and stacking each arrival on the last one climbed into the sky.
+  const existing = state.logs.filter(p => p.live && p.initialized && !p.inFlight);
   const arrivalTime = pose => cycle.logs[pose.slot].addedAt >= 0 ? cycle.logs[pose.slot].addedAt + 1 : 0;
   arrivals.sort((a, b) => arrivalTime(a) - arrivalTime(b) || a.slot - b.slot);
   for (const pose of arrivals) { initializePose(pose, existing, groundHeight); existing.push(pose); }
