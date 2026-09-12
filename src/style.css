@@ -128,3 +128,20 @@ body.focus-mode main{height:100%;min-height:0}
 body.focus-mode .stage{flex:1;height:100dvh;min-height:0;max-height:none}
 body.focus-mode .masthead,body.focus-mode footer,body.focus-mode main>:not(.stage),body.focus-mode .stage>:not(#canvas-container):not(.loading){display:none!important}
 body.focus-mode:not(.focus-pointer-active) canvas{cursor:none;outline:none}
+
+/* Repo link and collapsed commit log stay in the footer; the list opens upward. */
+footer{position:relative;height:auto;min-height:36px;gap:14px}
+.github-presence{display:flex;align-items:center;gap:12px;position:relative;flex-shrink:0}
+.github-link,.github-presence summary{font:inherit;letter-spacing:.1em;color:#7d8674}
+.github-link:hover,.github-presence summary:hover{color:#d8c4a3}
+.github-presence summary{cursor:pointer;list-style:none}
+.github-presence summary::-webkit-details-marker{display:none}
+.github-presence details .github-commits{display:none}
+.github-presence details[open] .github-commits{display:block;position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);width:min(460px,calc(100vw - 28px));max-height:min(52vh,420px);overflow:auto;margin:0;padding:10px 14px;list-style:none;background:#171914f5;border:1px solid #ffffff1a;border-radius:6px;box-shadow:0 10px 32px #000c;z-index:8;letter-spacing:0}
+.github-commits li{padding:8px 0;border-top:1px solid #ffffff10}
+.github-commits li:first-child{border:0;padding-top:2px}
+.github-commits a{display:block;font-size:11px;color:#d8d9cc;line-height:1.45}
+.github-commits time,.github-commits code{font-size:10px;color:#7d866f;margin-right:7px}
+.github-prompt{margin:6px 0 0;font-size:11px;line-height:1.45;color:#cbb792}
+.github-prompt.empty,.github-status{margin:6px 0 0;font-size:11px;color:#6a7360;font-style:italic}
+@media(max-width:700px){footer{min-height:33px;gap:10px}.footer-tag{display:none}.github-presence details[open] .github-commits{left:auto;right:0;transform:none}}

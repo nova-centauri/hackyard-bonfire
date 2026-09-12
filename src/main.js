@@ -7,6 +7,7 @@ import { FirePoker } from './fire-poker.js';
 import { mountFocusMode } from './focus-mode.js';
 import { isTier } from './quality.js';
 import { loadPreferences, savePreferences } from './preferences.js';
+import { GITHUB_REPO, mountGithubLog } from './github-log.js';
 
 const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2c1 6-6 7-5 12 1-2 3-3 4-5 0 3 5 5 5 8a5 5 0 0 1-10 0c-2-6 4-9 6-15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -28,7 +29,7 @@ document.querySelector('#app').innerHTML=`
   <div class="collection-bar"><div role="group" aria-label="Study collection"><button data-collection="refinements" class="selected" aria-pressed="true">Animated studies <span>07—08</span></button><button data-collection="originals" aria-pressed="false">Original studies <span>01—05</span></button></div><span class="collection-note">Ink & Wash foundation · Cinematic atmosphere</span></div>
   <nav class="study-nav" aria-label="Rendering styles"></nav>
  </main>
- <footer><span>FLAME, WOOD & EVERYTHING BETWEEN</span><span>Three.js <span class="footer-dot">·</span> 360° studies</span></footer>
+ <footer><span class="footer-tag">FLAME, WOOD & EVERYTHING BETWEEN</span><div class="github-presence"><a class="github-link" href="${GITHUB_REPO.url}" rel="noopener noreferrer" aria-label="Hackyard Bonfire on GitHub">GitHub</a><details id="github-log"><summary>Commit log</summary><ol id="github-commits" class="github-commits"><li class="github-status">Loading…</li></ol></details></div><span class="footer-credit">Three.js <span class="footer-dot">·</span> 360° studies</span></footer>
  <div id="focus-controls" class="focus-controls" role="group" aria-label="Focus mode controls" hidden><button id="add-fuel-focus" class="restore-menus" aria-label="Add a random piece of fuel" title="Add a random piece of fuel">${addFuelIcon}</button><button id="restore-menus" class="restore-menus" aria-label="Exit focus mode and show menus" title="Show menus (Esc)">${gearIcon}</button></div>`;
 
 let viewer,current;
@@ -162,3 +163,4 @@ document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener
 document.querySelectorAll('[data-layer]').forEach(input=>input.addEventListener('change',()=>viewer?.setLayer(input.dataset.layer,input.checked)));
 document.querySelector('#reset').addEventListener('click',()=>document.querySelector('[data-view="full"]').click());
 document.querySelector('#motion-toggle').addEventListener('click',()=>viewer?.setPaused(!viewer.paused));
+mountGithubLog();

@@ -142,3 +142,5 @@ firelight that stays in the flame volume.
   use the rendered profile so logs no longer sink into a 16-gon hull;
   firelight stays in the pit, coals keep a warm pool during dips, night
   fill is warmer and less blue.
+- 2026-09-12 — Footer GitHub link and a collapsed recent-commit log; prompt
+  slots backfill from `public/github-log.json` (none invented).

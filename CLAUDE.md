@@ -18,6 +18,7 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
 ## Where things are
 
 - `src/main.js` — page shell, study navigation, sound controls, preferences.
+- `src/github-log.js` — footer GitHub link and commit log (`public/github-log.json` for prompt backfill).
 - `src/scene.js` — `BonfireViewer`: renderer, composer, quality application,
   frame loop, scene construction (`buildScene`).
 - `src/quality.js` — LoD tiers, size cap, frame-pacing governor (pure).

@@ -1,0 +1,82 @@
+{
+  "repoUrl": "https://github.com/nova-centauri/hackyard-bonfire",
+  "howToBackfill": "Add an entry to prompts keyed by full or abbreviated SHA: { \"text\": \"the user prompt that produced the commit\", \"source\": \"where you found it\" }. Omit a SHA, or leave text empty, to keep the empty slot. Do not invent prompts.",
+  "commits": [
+    {
+      "sha": "6217815ab5751384b0a5c3e67d59fd52ba047cf7",
+      "date": "2026-09-12T19:36:11+00:00",
+      "subject": "Seat the fire: wood-shaped logs, no hover, warmer night light"
+    },
+    {
+      "sha": "106f96cb0b60f52b32862eb45d343b3a36894453",
+      "date": "2026-09-12T19:32:15+00:00",
+      "subject": "Keep auto-feed on wood and fix scrap-fuel tests."
+    },
+    {
+      "sha": "e73261843329c0fd72a4625b8788ad497b4b88c9",
+      "date": "2026-09-12T19:28:28+00:00",
+      "subject": "Add pallet, cardboard and newspaper fuel with a focus-mode feed."
+    },
+    {
+      "sha": "df4eccd1e42a746190898e78b60cf742210e7059",
+      "date": "2026-09-12T18:34:11+00:00",
+      "subject": "Make the fire moodier: pop lulls and loud pops, livelier light, a real stick, focus by default"
+    },
+    {
+      "sha": "cd10e0aac832fc9bb48345f534976d1dc49906d3",
+      "date": "2026-09-12T18:03:26+00:00",
+      "subject": "Record the finished 1x and 10x confirmation runs in the roadmap"
+    },
+    {
+      "sha": "6a93e3de11cadea5ab1cc2413593bf10a7e7931e",
+      "date": "2026-09-12T18:00:26+00:00",
+      "subject": "Keep the tended fire alive at every burn speed"
+    },
+    {
+      "sha": "e9beed17b9e9028f5c6b29b617ecd6e311562dbc",
+      "date": "2026-09-12T16:39:34+00:00",
+      "subject": "Stop the twig nest tipping onto its side"
+    },
+    {
+      "sha": "7465bb9f4c8dd57482e9b7183e41d76bb9bc9744",
+      "date": "2026-09-12T15:27:08+00:00",
+      "subject": "Steer the char glow with the authored emissive masks"
+    },
+    {
+      "sha": "e649187752b45f84a66d4801e2b7fb5faae9d592",
+      "date": "2026-09-12T15:07:03+00:00",
+      "subject": "Document that the burn shader does not read the authored emissive masks yet"
+    },
+    {
+      "sha": "b3e857174fe5f56c281bbcc5948376e179723763",
+      "date": "2026-09-12T10:40:19-04:00",
+      "subject": "Authored bark, end-grain, soil and steam textures (#2)"
+    },
+    {
+      "sha": "faede9b86fbf10a842ede76f8cdf70dcd539d95d",
+      "date": "2026-09-12T12:30:21+00:00",
+      "subject": "Document the residual depth re-renders from shrink settles"
+    },
+    {
+      "sha": "7c4f5b9dbf8d39b37c5deaac0ffb13b9e21c85aa",
+      "date": "2026-09-12T12:28:13+00:00",
+      "subject": "Do not re-render depth and shadows for falling char flakes or twig shrink"
+    },
+    {
+      "sha": "24fa518e131b2882cf1f1590ed4a0a4c5a0548f8",
+      "date": "2026-09-12T12:15:49+00:00",
+      "subject": "Texture override pipeline, authoring brief, and documentation refresh"
+    },
+    {
+      "sha": "2c2625795288a77e621166f055f12f0182d8c6c5",
+      "date": "2026-09-12T12:10:00+00:00",
+      "subject": "Keep the fire tended by default and remember focus, sound and volume"
+    },
+    {
+      "sha": "a080d6752948d7a46132de78efc3415f2ca902c3",
+      "date": "2026-09-12T12:05:26+00:00",
+      "subject": "Add wind, synchronized pops, noise-driven firelight, heat haze and vignette"
+    }
+  ],
+  "prompts": {}
+}

@@ -143,7 +143,8 @@ the work log.
 ## Code map
 
 - `src/main.js` page shell, navigation, sound controls, remembered
-  preferences (`src/preferences.js`).
+  preferences (`src/preferences.js`). Footer GitHub link and commit log
+  (`src/github-log.js`); prompts backfill in `public/github-log.json`.
 - `src/scene.js` the viewer: renderer, composer, quality application, frame
   loop, scene construction. `src/quality.js` tiers and governor.
 - `src/lifecycle.js` burn clock and tending; `src/log-combustion.js` surface
@@ -164,8 +165,8 @@ the work log.
 
 Tests live in `test/` as `node:test` files and cover the burn model, surface
 combustion, settling (including idle cost and sleeping), rocks, twigs, geometry,
-the quality governor, wind and pops, GPU layers, audio, preferences and the
-texture loader.
+the quality governor, wind and pops, GPU layers, audio, preferences, the
+texture loader and the GitHub commit log.
 
 ## Deploy
 
