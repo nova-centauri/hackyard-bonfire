@@ -48,14 +48,20 @@ Done in this pass:
   a falling piece keeps its last resting pose for the burn, and arrivals are
   dropped onto the settled pile. A viewer-loop test (`test/tended-fire.test.js`)
   runs 75 burn-minutes at 1200× with real settling and poses.
+- Long-session variety, first pass: a seeded restlessness envelope gives the
+  pops (and the audio's crackle) lively spells and lulls; loud pops with
+  ember showers every few minutes; firelight with calm and lively spells and
+  brief dips. The page opens in focus mode with a gear that is always
+  visible; the poking stick is a modelled branch and pushes harder.
 
 ## Next
 
 1. **Volumetric resolution**: render fire and smoke at half resolution with a
    depth-aware upsample on Medium and below. Largest remaining GPU lever.
-2. **Long-session variety**: occasional larger events (a log splitting along
-   its length, a stack collapse with a spark shower) on a slow schedule; a
-   very slow drift of the ambient colour temperature with the fire's age.
+2. **Long-session variety**: the restlessness envelope and loud pops are in;
+   still to come are the larger events (a log splitting along its length, a
+   stack collapse with a spark shower) on a slow schedule and a very slow
+   drift of the ambient colour temperature with the fire's age.
 3. **Ash and coal continuity**: coals should be replenished from shed char in
    place over hours (mass exists in the model; the bed geometry only shrinks).
 4. **Audio**: a second field recording for variety, and a low-level breath of
@@ -106,3 +112,15 @@ Done in this pass:
   29th twig, rotating and lifting the whole nest within two seconds of every
   fire. Settling now ignores instanced meshes; regression test mirrors the
   scene's build order.
+- 2026-09-12 — Restlessness: `fireActivity` in `src/pops.js` scales the pop
+  rate (mean 1, cap 2.8, zero about a fifth of the time; thinned scheduling
+  so lulls leave no stale pop). Loud pops (about one in twenty, forty seconds
+  apart) throw 70–160 embers and get a crack, deep knock and sizzle of their
+  own. The audio follows the same envelope: a low-pass on the recording bed
+  closes to 1.3 kHz in a lull to muffle its clicks, close cracks stop in a
+  lull and bunch in a lively spell. Firelight amplitude .22 plus a slow
+  lively envelope and rare dips (was a steady .16). Poking stick rebuilt as
+  a swept branch (`src/poker-stick.js`), push strength .6 → .9. Preferences
+  moved to a v2 key so focus mode is the default for everyone; the gear
+  rests at 38 % opacity, stays clickable, and no longer hides when the
+  pointer crosses the window edge.

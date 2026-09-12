@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createMotionState, updateFlameCentroid, updateStudyMotion } from '../src/motion.js';
+import { createMotionState, firelightMood, updateFlameCentroid, updateStudyMotion } from '../src/motion.js';
 import { createHybridFire } from '../src/hybrid-fire.js';
 import { createEmbers } from '../src/embers.js';
 import { createSteam } from '../src/steam.js';
@@ -49,8 +49,8 @@ test('firelight flicker is noise-driven, gusts widen it, and a dying fire dims a
   for (let frame = 1; frame <= 600; frame++) { study.animationTime = frame / 30; updateStudyMotion(study); samples.push(light.intensity); }
   const mean = samples.reduce((a, b) => a + b, 0) / samples.length, span = Math.max(...samples) - Math.min(...samples);
   assert.ok(Math.abs(mean - base * Math.min(1, 2.6 / 3.2)) < base * .08, 'the flicker is centred on the fire power');
-  assert.ok(span > base * .1 && span < base * .5, `flicker span ${span / base} is visible but not strobing`);
-  for (let i = 1; i < samples.length; i++) assert.ok(Math.abs(samples[i] - samples[i - 1]) < base * .09, 'no frame-to-frame jump');
+  assert.ok(span > base * .35 && span < base * .85, `flicker span ${span / base} is lively but not strobing`);
+  for (let i = 1; i < samples.length; i++) assert.ok(Math.abs(samples[i] - samples[i - 1]) < base * .14, 'no frame-to-frame jump');
   const calm = { ...study, weather: createWeather(1) }; calm.weather.update = () => { calm.weather.gust = 0; return calm.weather; };
   const windy = { ...study, weather: createWeather(1) }; windy.weather.update = () => { windy.weather.gust = 1; return windy.weather; };
   const spans = [calm, windy].map(variant => {
@@ -63,4 +63,23 @@ test('firelight flicker is noise-driven, gusts widen it, and a dying fire dims a
   study.cycle.flame = .2; study.animationTime = 300; updateStudyMotion(study);
   assert.ok(light.intensity < base * .12, 'little flame, little light');
   assert.ok(light.color.g < warm.g, 'ember light is redder than flame light');
+});
+
+test('the firelight has calm spells, lively spells and brief dips rather than one steady shimmer', () => {
+  const { study, light } = motionStudy();
+  study.weather.update = () => { study.weather.gust = 0; return study.weather; };
+  const samples = [];
+  for (let frame = 1; frame <= 30 * 1200; frame++) { study.animationTime = frame / 30; updateStudyMotion(study); samples.push(light.intensity); }
+  const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+  const deviation = window => { const m = window.reduce((a, b) => a + b, 0) / window.length; return Math.sqrt(window.reduce((a, b) => a + (b - m) ** 2, 0) / window.length); };
+  const windows = []; for (let start = 0; start + 300 <= samples.length; start += 300) windows.push(deviation(samples.slice(start, start + 300)));
+  assert.ok(Math.max(...windows) > Math.min(...windows) * 1.8, 'ten-second stretches differ in how much the light moves');
+  const dips = samples.filter(value => value < mean * .75).length / samples.length;
+  assert.ok(dips > .002 && dips < .04, `occasional deep dips (${(dips * 100).toFixed(2)}% of frames)`);
+  assert.ok(samples.every(value => value > 0), 'the light never goes out');
+  for (const t of [0, 12.5, 400]) {
+    const mood = firelightMood(t);
+    assert.ok(mood.lively >= 0 && mood.lively <= 1 && mood.dip >= 0 && mood.dip <= 1);
+    assert.deepEqual(firelightMood(t), mood, 'the mood is a pure function of time');
+  }
 });

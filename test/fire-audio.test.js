@@ -287,3 +287,67 @@ test('pop events play a short bright crack with a knock, grouped separately from
     assert.equal(played.length, 2, 'pops have a short refractory period');
   } finally { audio.dispose(); }
 });
+
+test('a lull muffles the recorded crackle and leaves out the close cracks; a lively spell bunches them', async () => {
+  const { audio, context, study } = await enabledFire();
+  const played = []; audio._playCrackle = (...args) => played.push(args);
+  try {
+    study.burnVisuals.fireActivity = 1; audio.update(study, true);
+    assert.equal(audio.bedTone.type, 'lowpass');
+    assert.ok(audio.bedTone.frequency.value >= 4700, 'a restless fire leaves the bed open');
+    const openGain = audio.recordedBed.gain.value;
+    audio._nextCrackle = 1; context.currentTime = 1.1; audio.update(study, true);
+    assert.equal(played.length, 1); assert.equal(played[0][1], false);
+    const livelyInterval = audio._nextCrackle - context.currentTime;
+    study.burnVisuals.fireActivity = 0; audio.update(study, true);
+    assert.ok(audio.bedTone.frequency.value <= 1300, 'a lull closes the bed tone over the recording\'s clicks');
+    assert.ok(audio.recordedBed.gain.value < openGain, 'the bed settles slightly in a lull');
+    audio._nextCrackle = 2; context.currentTime = 2.1; audio.update(study, true);
+    assert.equal(played.length, 1, 'no close cracks in a lull');
+    assert.ok(audio._nextCrackle > 2.1 && audio._nextCrackle <= 3.2, 'the lull is re-checked soon rather than scheduling a crack');
+    study.burnVisuals.fireActivity = .12; audio._nextCrackle = 3; context.currentTime = 3.1; audio.update(study, true);
+    assert.equal(played.length, 2);
+    assert.ok(audio._nextCrackle - context.currentTime > livelyInterval * 4, 'a quiet spell spaces the cracks far apart');
+    study.burnVisuals.fireActivity = 2.5; audio._nextCrackle = 4; context.currentTime = 4.1; audio.update(study, true);
+    assert.equal(played.length, 3);
+    assert.ok(audio._nextCrackle - context.currentTime < livelyInterval, 'a lively spell brings the next crack sooner');
+    audio.random = () => .2; audio._nextCrackle = 5; context.currentTime = 5.1; audio.update(study, true);
+    assert.ok(audio._nextCrackle - context.currentTime < .25, 'lively cracks sometimes come in quick twos');
+    delete study.burnVisuals.fireActivity; audio.update(study, true);
+    assert.ok(audio.bedTone.frequency.value >= 4700, 'no envelope means an open bed');
+  } finally { audio.dispose(); }
+});
+
+test('a loud pop is a louder, longer crack with a deep knock and an ember sizzle, routed from its own event', async () => {
+  const { audio, context, study } = await enabledFire();
+  try {
+    audio._playCrackle(.6, 'pop', 0);
+    const ordinaryPeak = Math.max(...context.sources[2].connections[0].connections[0].connections[0].gain.events.map(event => event.value || 0));
+    const before = context.sources.length;
+    audio._playCrackle(.5, 'loud', 1);
+    assert.equal(context.sources.length - before, 3, 'crack, knock and sizzle');
+    const [crack, knock, sizzle] = context.sources.slice(before);
+    assert.equal(crack.buffer, audio.whiteNoise); assert.equal(knock.buffer, audio.brownNoise); assert.equal(sizzle.buffer, audio.whiteNoise);
+    const crackEnvelope = crack.connections[0].connections[0].connections[0].gain.events;
+    const loudPeak = Math.max(...crackEnvelope.map(event => event.value || 0));
+    assert.ok(loudPeak > ordinaryPeak * 1.5, `a loud pop (${loudPeak}) is well above an ordinary one (${ordinaryPeak})`);
+    assert.ok(crackEnvelope.find(event => event.type === 'linear').time <= .002, 'instant onset');
+    assert.ok(crack.stopTimes[0] > .09 && crack.stopTimes[0] < .16, 'the crack is longer than a small pop and still short');
+    const body = knock.connections[0];
+    assert.equal(body.type, 'bandpass'); assert.ok(body.frequency.value < 240, 'the knock is deep');
+    assert.ok(knock.stopTimes[0] >= .28, 'the knock rings on');
+    assert.ok(sizzle.stopTimes[0] >= .5, 'the ember sizzle is the longest part');
+    assert.equal(audio.voices.size, 2);
+    sizzle.onended();
+    assert.equal(audio.voices.size, 1, 'the voice ends with the sizzle');
+    assert.ok([crack, knock, sizzle].every(source => source.disconnected));
+    const played = []; audio._playCrackle = (...args) => played.push(args);
+    study.burnVisuals.impactEvents.push({ id: 1, strength: 1.4, time: study.animationTime, position: { x: 0 }, kind: 'pop', loud: true });
+    context.currentTime = 1; audio.update(study, true);
+    assert.equal(played.length, 1); assert.equal(played[0][1], 'loud');
+    assert.ok(Math.abs(played[0][0] - (1.4 - 1) / .6) < 1e-9, 'loudness follows how far the pop exceeds an ordinary one');
+    audio.setVolume(0); const count = context.sources.length;
+    audio._playCrackle = FireAudio.prototype._playCrackle;
+    audio._playCrackle(1, 'loud', 0); assert.equal(context.sources.length, count, 'muted fires make no loud pops');
+  } finally { audio.dispose(); }
+});

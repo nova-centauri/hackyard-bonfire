@@ -2,6 +2,10 @@ const clamp = (value, low = 0, high = 1) => Math.max(low, Math.min(high, Number.
 const MAX_VOICES = 10;
 const RECORDING_URL = `${import.meta.env?.BASE_URL || '/'}audio/campfire-soft.mp3`;
 const BED_CROSSFADE = 2;
+// The recording's own crackle is muffled through the fire's quiet spells: the
+// bed's low-pass sits open when the fire is restless and closes toward this
+// floor in a lull, leaving the roar and losing the snap of the clicks.
+const BED_TONE_FLOOR = 1300, BED_TONE_OPEN = 4800;
 
 // The quiet bed is a locally bundled CC0 campfire field recording; details and
 // processing are in public/audio/ATTRIBUTION.md. Responsive wood/ash sounds and
@@ -89,6 +93,9 @@ export class FireAudio {
     const heat = clamp(cycle ? cycle.coalHeat : .7);
     const gust = clamp(study?.weather?.gust ?? 0);
     const hot = !cycle || cycle.phase !== 'Cold fire bed' && (flame > .0001 || heat > .015);
+    // The same seeded restlessness that spaces the visible pops: the crackle
+    // comes and goes with it instead of ticking along at one steady rate.
+    const activity = clamp(visuals?.fireActivity ?? 1, 0, 3), lively = Math.min(1, activity);
     const active = !!(this.enabled && running && study?.config?.animated && hot && !globalThis.document?.hidden);
     const resuming = active && !this._active;
     const skipEvents = changed || this._skipEvents || !active || resuming;
@@ -123,7 +130,8 @@ export class FireAudio {
     this._target(this.body.gain, fallback * (.018 + flame * .025 + heat * .008) * this._bedVariation, .8);
     this._target(this.hiss.gain, fallback * (.0007 + flame * .0025), .8);
     this._target(this.bodyFilter.frequency, 330 + flame * 310, .8);
-    this._target(this.recordedBed.gain, (1.35 + flame * .8 + heat * .15) * this._bedVariation * (1 + gust * .12), 1.2);
+    this._target(this.recordedBed.gain, (1.35 + flame * .8 + heat * .15) * this._bedVariation * (1 + gust * .12) * (.93 + lively * .07), 1.2);
+    this._target(this.bedTone.frequency, BED_TONE_FLOOR + (BED_TONE_OPEN - BED_TONE_FLOOR) * Math.pow(lively, .7), 1.5);
     if (this.recording && now + .15 >= this._nextBed) this._scheduleRecording(now);
     // Contacts in one tumble share a soft sluff. A real-time refractory period
     // keeps rolling/repeated contacts from sounding like a machine gun.
@@ -134,17 +142,24 @@ export class FireAudio {
       this._lastCollapse = now;
     }
     // A pop is the sound of the visible spark burst: sharp, bright, and never
-    // the muffled sluff of settling wood.
+    // the muffled sluff of settling wood. A loud one is the gunshot crack that
+    // goes with the ember shower.
     if (pops.length && now - this._lastPop > .12) {
       const loudest = pops.reduce((best, event) => event.strength > best.strength ? event : best);
-      this._playCrackle(clamp(.25 + loudest.strength), 'pop', loudest.position?.x || 0);
+      if (loudest.loud) this._playCrackle(clamp((loudest.strength - 1) / .6), 'loud', loudest.position?.x || 0);
+      else this._playCrackle(clamp(.25 + loudest.strength), 'pop', loudest.position?.x || 0);
       this._lastPop = now;
     }
     if (now >= this._nextCrackle) {
       // Most pops already belong to the field recording. Add only rare, small
-      // close cracks; lower heat leaves longer quiet spaces.
-      this._playCrackle(.035 + this.random() ** 2 * (.08 + flame * .17), false, (this.random() - .5) * 3);
-      this._nextCrackle = now + (this.recording ? 3.2 + this.random() * 7 : .65 + this.random() * 3.8) / (.45 + flame * .7 + heat * .1 + gust * .35);
+      // close cracks; lower heat leaves longer quiet spaces, a lull leaves
+      // none, and a lively spell bunches them into twos and threes.
+      if (activity < .05) this._nextCrackle = now + .5 + this.random() * .5;
+      else {
+        this._playCrackle(.035 + this.random() ** 2 * (.08 + flame * .17), false, (this.random() - .5) * 3);
+        const interval = (this.recording ? 3.2 + this.random() * 7 : .65 + this.random() * 3.8) / (.45 + flame * .7 + heat * .1 + gust * .35);
+        this._nextCrackle = activity > .8 && this.random() < .35 ? now + .07 + this.random() * .16 : now + interval / Math.max(.15, Math.min(1.6, activity));
+      }
     }
   }
 
@@ -162,7 +177,9 @@ export class FireAudio {
     this.whiteNoise = this._noiseBuffer(3, false);
     this.brownNoise = this._noiseBuffer(5, true);
     this.recordedBed = context.createGain(); this.recordedBed.gain.value = 0;
-    this.recordedBed.connect(this.master);
+    this.bedTone = context.createBiquadFilter();
+    this.bedTone.type = 'lowpass'; this.bedTone.frequency.value = BED_TONE_OPEN; this.bedTone.Q.value = .4;
+    this.recordedBed.connect(this.bedTone).connect(this.master);
     this.bodyFilter = context.createBiquadFilter();
     this.bodyFilter.type = 'lowpass';
     this.bodyFilter.frequency.value = 650;
@@ -178,7 +195,7 @@ export class FireAudio {
     this.hissSource = context.createBufferSource();
     this.hissSource.buffer = this.whiteNoise; this.hissSource.loop = true;
     this.hissSource.connect(this.hissFilter).connect(this.hiss).connect(this.master);
-    this._bedNodes = [this.bodySource, this.hissSource, lowCut, this.bodyFilter, this.body, this.hissFilter, this.hiss, this.recordedBed];
+    this._bedNodes = [this.bodySource, this.hissSource, lowCut, this.bodyFilter, this.body, this.hissFilter, this.hiss, this.recordedBed, this.bedTone];
     this.bodySource.start(); this.hissSource.start(0, .71);
   }
 
@@ -249,6 +266,8 @@ export class FireAudio {
   _playCrackle(strength, collapse, x) {
     if (!this._active || this.volume === 0) return;
     strength = clamp(strength);
+    const loud = collapse === 'loud';
+    if (loud) return this._playLoudPop(strength, x);
     const pop = collapse === 'pop';
     collapse = collapse === true;
     if (this.voices.size >= MAX_VOICES) {
@@ -311,6 +330,50 @@ export class FireAudio {
     this._registerVoice(this.voices, sources, nodes, envelopes, noise);
     noise.start(now, this.random() * (this.whiteNoise.duration - duration));
     noise.stop(now + duration + .015);
+  }
+
+  // A resin pocket going off like a gunshot: a hard, bright crack, a deep
+  // knock from the wood body, and the sizzle of the ember shower that
+  // follows it into the air. Louder and longer than any ordinary pop.
+  _playLoudPop(strength, x) {
+    if (this.voices.size >= MAX_VOICES) this.voices.values().next().value.stop();
+    const context = this.context, now = context.currentTime;
+    const nodes = [], sources = [], envelopes = [];
+    const pan = context.createStereoPanner(); nodes.push(pan);
+    pan.pan.value = clamp(x * .12, -.42, .42);
+    pan.connect(this.master);
+    const crack = context.createBufferSource(), crackGain = context.createGain(), crackBand = context.createBiquadFilter(), crackTop = context.createBiquadFilter();
+    sources.push(crack); nodes.push(crackGain, crackBand, crackTop); envelopes.push(crackGain.gain);
+    const amplitude = .2 + strength * .14, duration = .08 + strength * .05;
+    crackGain.gain.setValueAtTime(.0001, now);
+    crackGain.gain.linearRampToValueAtTime(amplitude, now + .001);
+    crackGain.gain.exponentialRampToValueAtTime(amplitude * .35, now + .012);
+    crackGain.gain.linearRampToValueAtTime(amplitude * .45, now + .02);
+    crackGain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    crackBand.type = 'bandpass'; crackBand.Q.value = .7;
+    crackBand.frequency.setValueAtTime(1300 + this.random() * 1000, now);
+    crackBand.frequency.exponentialRampToValueAtTime(900, now + duration);
+    crackTop.type = 'lowpass'; crackTop.frequency.value = 6500; crackTop.Q.value = .5;
+    crack.buffer = this.whiteNoise; crack.connect(crackBand).connect(crackTop).connect(crackGain).connect(pan);
+    const knock = context.createBufferSource(), knockGain = context.createGain(), knockBody = context.createBiquadFilter();
+    sources.push(knock); nodes.push(knockGain, knockBody); envelopes.push(knockGain.gain);
+    knockBody.type = 'bandpass'; knockBody.frequency.value = 150 + this.random() * 80; knockBody.Q.value = .8;
+    knockGain.gain.setValueAtTime(.0001, now);
+    knockGain.gain.linearRampToValueAtTime(.09 + strength * .06, now + .006);
+    knockGain.gain.exponentialRampToValueAtTime(.0001, now + .28);
+    knock.buffer = this.brownNoise; knock.connect(knockBody).connect(knockGain).connect(pan);
+    const sizzle = context.createBufferSource(), sizzleGain = context.createGain(), sizzleBand = context.createBiquadFilter();
+    sources.push(sizzle); nodes.push(sizzleGain, sizzleBand); envelopes.push(sizzleGain.gain);
+    sizzleBand.type = 'bandpass'; sizzleBand.frequency.value = 2600; sizzleBand.Q.value = .5;
+    sizzleGain.gain.setValueAtTime(.0001, now);
+    sizzleGain.gain.linearRampToValueAtTime(.012 + strength * .01, now + .03);
+    sizzleGain.gain.exponentialRampToValueAtTime(.0001, now + .5);
+    sizzle.buffer = this.whiteNoise; sizzle.connect(sizzleBand).connect(sizzleGain).connect(pan);
+    // The sizzle outlives the crack and the knock, so it is the voice's end.
+    this._registerVoice(this.voices, sources, nodes, envelopes, sizzle);
+    crack.start(now, this.random() * (this.whiteNoise.duration - 1)); crack.stop(now + duration + .015);
+    knock.start(now, this.random() * (this.brownNoise.duration - 1)); knock.stop(now + .3);
+    sizzle.start(now, this.random() * (this.whiteNoise.duration - 1)); sizzle.stop(now + .52);
   }
 
   _registerVoice(collection, sources, nodes, envelopes, endingSource) {
