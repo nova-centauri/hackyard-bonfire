@@ -1,12 +1,40 @@
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { collectMaterials, configureAuthoredTexture, loadAuthoredTextures, swapTexture } from '../src/texture-loader.js';
 import { TEXTURE_MANIFEST } from '../src/texture-manifest.js';
 
-test('the default manifest is empty so nothing is fetched', () => {
-  assert.deepEqual(TEXTURE_MANIFEST, {});
+function pngSize(path) {
+  const buf = readFileSync(path);
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
+test('the authored manifest lists shipped texture files', () => {
   assert.ok(Object.isFrozen(TEXTURE_MANIFEST));
+  const expected = {
+    bark: { map: 2048, normal: 2048, emissive: 1024 },
+    endGrain: { map: 1024, normal: 1024, emissive: 512 },
+    exposedWood: { map: 1024, normal: 1024 },
+    soil: { map: 2048, normal: 2048 },
+    smokePuff: { map: 512 },
+  };
+  assert.deepEqual(Object.keys(TEXTURE_MANIFEST).sort(), Object.keys(expected).sort());
+  for (const [slot, roles] of Object.entries(expected)) {
+    assert.deepEqual(Object.keys(TEXTURE_MANIFEST[slot]).sort(), Object.keys(roles).sort());
+    for (const [role, size] of Object.entries(roles)) {
+      const url = TEXTURE_MANIFEST[slot][role];
+      const path = join('public', url);
+      assert.ok(existsSync(path), `${path} is missing`);
+      assert.ok(statSync(path).size > 1024, `${path} is too small`);
+      if (url.endsWith('.png')) {
+        const { width, height } = pngSize(path);
+        assert.equal(width, size, `${path} width`);
+        assert.equal(height, size, `${path} height`);
+      }
+    }
+  }
 });
 
 test('authored textures replace the procedural handle in every material that used it', async () => {

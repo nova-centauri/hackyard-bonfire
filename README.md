@@ -105,11 +105,11 @@ Details, the tier table and how to measure are in
 
 ## Textures
 
-All textures are procedural today. The authoring brief for replacing them
+Wood, soil and steam sprites are authored files under `public/textures/`,
+listed in `src/texture-manifest.js`. Procedural textures still generate at
+startup and remain the fallback if a file is missing. The authoring brief
 (slots, sizes, colour spaces, tiling rules, channel meanings, workflow) is
-[docs/textures.md](docs/textures.md). Files go under `public/textures/` and
-are listed in `src/texture-manifest.js`; anything not listed stays
-procedural.
+[docs/textures.md](docs/textures.md).
 
 ## Simulation notes
 
