@@ -24,8 +24,9 @@ const noise = `
     return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
       mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
   }
-  // Three resolved octaves retain folds without paying for subpixel detail.
-  float fbm(vec3 p) {return n3(p)*.57+n3(p*2.03+7.7)*.28+n3(p*4.11-5.3)*.15;}
+  // Three resolved octaves retain folds without paying for subpixel detail;
+  // small windows and slow machines drop to two, renormalized to the same range.
+  float fbm(vec3 p) {float v=n3(p)*.57+n3(p*2.03+7.7)*.28;return uOctaves>2?v+n3(p*4.11-5.3)*.15:v/.85;}
   vec2 boxHit(vec3 ro,vec3 rd,vec3 lo,vec3 hi) {vec3 a=(lo-ro)/rd,b=(hi-ro)/rd,c=min(a,b),d=max(a,b);return vec2(max(max(c.x,c.y),c.z),min(min(d.x,d.y),d.z));}
 `;
 
@@ -48,6 +49,9 @@ export function createHybridFire(config, depthTexture, logDefs) {
       uLogBasisZ: { value: Array.from({ length: 7 }, () => new THREE.Vector3(0, 0, 1)) },
       uSourceMotion: { value: sources.map(() => new THREE.Vector4(0, 0, 1, 1)) },
       uIntensity: { value: 1 }, uImpact: { value: 0 }, uFuel: { value: Array(12).fill(1) }, uLogHeat: { value: Array(7).fill(1) },
+      // Level of detail: ray-march sample count, noise octaves and whether the
+      // thin surface combustion sheath is evaluated at all.
+      uSteps: { value: 88 }, uOctaves: { value: 3 }, uContact: { value: 1 },
       uSources: { value: sources.map(s => new THREE.Vector4(...s.base.toArray(), s.height)) },
       uShapes: { value: sources.map(s => new THREE.Vector4(s.width, s.lean.x, s.lean.y, s.phase)) },
       uLogA: { value: logDefs.map(d => new THREE.Vector4(...d[0], d[2])) },
@@ -59,6 +63,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
       uniform sampler2D uDepth,uBurnMap;
       uniform vec2 uResolution;
       uniform float uTime,uIntensity,uImpact,uCoreHeat,uFreshFuel,uLocalizedBurn,uFuel[12],uLogHeat[7];
+      uniform int uSteps,uOctaves,uContact;
       uniform mat4 uInvProjection,uCameraWorld;
       uniform vec3 uLo,uHi,uLogBasisX[7],uLogBasisZ[7];
       uniform vec4 uSources[12],uShapes[12],uSourceMotion[12],uLogA[7],uLogB[7];
@@ -160,13 +165,13 @@ export function createHybridFire(config, depthTexture, logDefs) {
         vec4 view=uInvProjection*vec4(screen*2.-1.,depth*2.-1.,1.);view/=view.w;
         vec3 opaque=(uCameraWorld*view).xyz;end=min(end,dot(opaque-ro,rd));
         if(end<=start)discard;
-        float ds=(end-start)/88.;
+        float ds=(end-start)/float(uSteps);
         // A restrained offset avoids the sparkling silhouettes of the first study.
         float jitter=.5+(hash(vec3(gl_FragCoord.xy,22.))-.5)*.28;
         vec4 sum=vec4(0.);
-        for(int j=0;j<88;j++) {
+        for(int j=0;j<uSteps;j++) {
           vec3 p=ro+rd*(start+(float(j)+jitter)*ds);
-          vec3 sampleField=field(p);vec2 contact=contactFire(p);
+          vec3 sampleField=field(p);vec2 contact=uContact>0?contactFire(p):vec2(0.);
           float density=max(sampleField.x,contact.x);
           if(density<.002)continue;
           float heat=max(sampleField.y,contact.y);
@@ -190,6 +195,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
   });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = false;mesh.renderOrder = 2;
+  mesh.userData.volumeKind = 'fire';mesh.userData.baseSteps = 88;
   // Coherent value noise is sampled once per draw instead of for every ray
   // sample. Each source has its own phase and pace; none snap on frame changes.
   const hash1 = n => { const value = Math.sin(n * 127.1 + config.seed * .13) * 43758.5453; return value - Math.floor(value); };
