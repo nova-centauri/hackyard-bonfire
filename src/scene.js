@@ -403,7 +403,8 @@ export class BonfireViewer {
  buildScene(config) {
   const fireScene=getFireScene(this.sceneId),indoor=!!fireScene.mouth;
   const rand=random(config.seed),mode=config.solidMode??config.mode,hybrid=config.fireVariant!==undefined,scene=new THREE.Scene(),volumes=[];
-  scene.background=new THREE.Color(config.background);scene.fog=new THREE.FogExp2(config.background,mode===2&&!hybrid?.015:.033);
+  scene.background=new THREE.Color(indoor?'#16110d':config.background);
+  scene.fog=new THREE.FogExp2(indoor?'#16110d':config.background,indoor?.014:mode===2&&!hybrid?.015:.033);
   const layers={};for(const name of ['flames','smoke','sparks','steam']){layers[name]=new THREE.Group();layers[name].name=name;scene.add(layers[name]);}
   const opaque=new THREE.Group();scene.add(opaque);
   const set=indoor?addFireSet(opaque,fireScene):null;
@@ -419,11 +420,18 @@ export class BonfireViewer {
   else if(hybrid){dirt.visible=false;ashSurface=addDirtClearing(opaque,config.seed);}
   if(mode===3)dirt.material=new THREE.MeshStandardMaterial({color:'#121820',roughness:.23,metalness:.8});
   const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':hybrid?'#c4b496':'#9cadc6',mode===2&&!hybrid?'#827f72':'#1c1612',hybrid?.2:mode===2?2.3:.65);scene.add(ambient);
-  if(indoor&&hybrid)ambient.intensity=.55;
+  if(indoor&&hybrid){ambient.color.set('#f0d2ae');ambient.groundColor.set('#4a3424');ambient.intensity=.62;}
   const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':hybrid?'#c8c0d2':'#b2c9e4',hybrid?.28:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=!hybrid;
   moon.shadow.mapSize.set(2048,2048);moon.shadow.camera.left=-4;moon.shadow.camera.right=4;moon.shadow.camera.top=5;moon.shadow.camera.bottom=-4;moon.shadow.normalBias=.035;scene.add(moon);
-  if(indoor&&hybrid){moon.position.set(-3,5,7);moon.intensity=.65;}
+  if(indoor&&hybrid){moon.color.set('#f6ddc0');moon.position.set(-2.2,4.8,7.2);moon.intensity=.7;}
   const light=new THREE.PointLight('#ff9a43',hybrid?22:mode===2?7:21,hybrid?8.8:9,2);light.position.set(0,hybrid?.85:1.45,0);scene.add(light);
+  if(indoor&&hybrid){
+    light.intensity=fireScene.id==='stove'?14:18;light.distance=7;
+    light.position.set(0,Math.min(.7,fireScene.mouth.height*.45),.06);
+    const spill=new THREE.PointLight('#ffb56a',fireScene.id==='stove'?9:12,12,2);
+    spill.position.set(0,fireScene.mouth.height*.42,fireScene.mouth.depth/2+1.15);scene.add(spill);
+    const lamp=new THREE.PointLight('#ffd8b4',5.5,14,2);lamp.position.set(2.4,2.5,3.6);scene.add(lamp);
+  }
   if(hybrid){light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.12;light.shadow.camera.far=8.8;light.shadow.bias=-.0006;light.shadow.normalBias=.016;light.shadow.radius=1.6;}
   const coreLight=new THREE.PointLight('#ff4a12',hybrid?5.6:8,hybrid?3.2:5,2);coreLight.position.set(0,hybrid?.16:.38,.08);scene.add(coreLight);
   const rim=new THREE.DirectionalLight('#ffbe70',hybrid?.07:mode===3?2:.4);rim.position.set(0,3,-5);scene.add(rim);
