@@ -60,6 +60,7 @@ class HearthCycle extends BurnCycle {
     this.ashDeposits = this.logs.map(() => 0);
     this.events = []; this.phase = null;
     this.record('A new fire', `${this.logs.length - this.queued} pieces on the bed · ${this.queued} pieces waiting`);
+    this.markOpeningFuel();
     this.updateSummary();
   }
   randomFuelType() {

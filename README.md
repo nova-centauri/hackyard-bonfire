@@ -172,7 +172,10 @@ the work log.
 ## Code map
 
 - `src/main.js` page shell, navigation, sound controls, remembered
-  preferences (`src/preferences.js`). Footer GitHub link and commit log
+  preferences (`src/preferences.js`). Quiet fire counts (`src/fire-stats.js`)
+  sit in a collapsed footer log: this browser on the preferences record,
+  everyone via `src/global-stats.js` (host `/api/stats` if it returns JSON,
+  otherwise Abacus). Footer GitHub link and commit log
   (`src/github-log.js`); prompts backfill in `public/github-log.json`.
 - `src/scene.js` the viewer: renderer, composer, quality application, frame
   loop, scene construction. `src/quality.js` tiers and governor.
@@ -194,8 +197,8 @@ the work log.
 
 Tests live in `test/` as `node:test` files and cover the burn model, surface
 combustion, settling (including idle cost and sleeping), rocks, twigs, geometry,
-the quality governor, wind and pops, GPU layers, audio, preferences, the
-texture loader and the GitHub commit log.
+the quality governor, wind and pops, GPU layers, audio, preferences, fire
+stats (local and global), the texture loader and the GitHub commit log.
 
 ## Deploy
 
@@ -209,5 +212,7 @@ are not set, the notify step warns and exits 0.
 
 Build from the committed lockfile with Node 22 (`npm ci && npm run build`) and
 serve `dist/` with a fallback to `index.html` for `/study/...` routes. The app
-runs entirely in the browser and needs no runtime environment variables or
-backend service. WebGL 2 is required.
+runs entirely in the browser and needs no runtime environment variables. Global
+“fires served” uses Abacus until same-origin `/api/stats` returns JSON; the
+page still works if that counter is down (Everyone shows a dash). WebGL 2 is
+required.

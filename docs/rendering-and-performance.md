@@ -152,7 +152,8 @@ draw. Broad mineral variation, dirt, soot and ash are computed into vertex
 colors at construction; the fragment shader retains one fine-grain noise
 sample instead of three. Collision hulls use the final buried geometry.
 
-The Home set uses nine static mesh draws instead of 24, batching its brick
+Compared with the initial hearth implementation (`2a5a97d`), the Home set
+uses nine static mesh draws instead of 24, batching its brick
 courses, mortar, stonework, timber and iron. Real brick lining raises static
 set triangles from 1,298 to 3,184, while shadow-casting meshes fall from 22
 to six. Its four small texture bakes total 2 MiB before

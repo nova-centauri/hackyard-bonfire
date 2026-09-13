@@ -22,8 +22,8 @@ Done in this pass:
   new fire; no fuel, queue, coal/ash state, fragments or settled pile survives.
   Scene admission and placement wrap the existing burn engine; its equations
   and clocks are unchanged. Home: 5 short cuts; pit: the original 7 slots and
-  all fuel types. Indoor mouths
-  bound wood and gas, and their cuts apply to manual and automatic additions.
+  all fuel types. The indoor mouth bounds wood and gas, and its cuts apply to
+  manual and automatic additions.
 - Scene refinement: 21 partly buried, irregular stones with larger alternating
   sizes, inward scorching, dirt and ash. The ring uses 6,720 triangles instead
   of 16,560, with static weathering in vertex colors. Home has a 1.78 m opening,
@@ -42,7 +42,8 @@ Done in this pass:
 - Wind with gusts, wood pops synchronized across sparks, light and sound,
   1/f firelight flicker with a moving light, heat-haze refraction, vignette.
 - The fire is kept tended by default so it survives a long session; focus
-  mode, sound and volume are remembered.
+  mode, sound, volume, auto-feed and quiet lifetime fire counts (fires started,
+  fuel placed, burn-clock time, times tended, pops) are remembered.
 - Texture pipeline groundwork: manifest, loader, authoring brief
   (`docs/textures.md`); procedural bark generation no longer allocates nine
   million strings at startup.
@@ -118,6 +119,26 @@ soil. This remains an ambient campfire, with no new controls or activities.
 
 ## Work log
 
+- 2026-09-13 — Refined the scene catalog to Outdoor pit (default) and Home
+  fireplace, removing Grand Fireplace and Wood Stove. The pit's 21 varied,
+  partly buried stones have baked dirt, ash and inward scorching, with 59%
+  fewer ring triangles. Home replaces the earlier furnished styling with a
+  lower opening, raised hearth, scorched brick lining and a dark room with
+  baked wall detail. Static hearth draws are nine, versus 24 in the initial
+  hearth implementation; the optional
+  authored texture pass has a brief and manifest in `planning/`.
+- 2026-09-13 — Quiet fire counts in a collapsed footer log, Here and Everyone.
+  This browser: fires started, fuel placed, burn-clock time, times tended,
+  pops; stored on the preferences record. Everyone: fires served, fuel, and
+  burn time in whole minutes. The live host has no stats API (static `dist/`,
+  `/api/stats` is the SPA). Abacus holds the public tally until a same-origin
+  JSON endpoint exists. Tests cover persist across a simulated reload; the two
+  clocks stay decoupled.
+- 2026-09-13 — Graphical pass on the indoor places: cottage brick and carved
+  stone fireplaces with timber/stone mantels, andirons, tools and cordwood;
+  the wood stove shrunk to a four-legged cast-iron body in a cream-brick
+  alcove with slate hearth, under-hearth wood and a tartan rug. Warm indoor
+  fill light. Outdoor pit unchanged.
 - 2026-09-13 — Added four fire settings, a focus-accessible picker, fixed mouth
   contacts, appropriate wood cuts and slot budgets, plus complete scene
   disposal on switching. Original still studies retain their outdoor sets.

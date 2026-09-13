@@ -26,6 +26,21 @@ test('a seed reproduces the starting fuel, heat, moisture, and feed schedule', (
   assert.equal(first.events.length, 1); assert.equal(first.remainder, 0);
 });
 
+test('opening fuel and later addLog counts are observational and do not change the burn', () => {
+  const cycle = new BurnCycle(42), twin = new BurnCycle(42);
+  assert.equal(cycle.piecesPlaced, cycle.logs.filter(log => log.phase !== 'queued').length);
+  assert.equal(cycle.feedCount, 0); assert.equal(cycle.tendedCount, 0);
+  assert.equal(cycle.addLog(), true);
+  assert.equal(cycle.feedCount, 1); assert.equal(cycle.piecesPlaced, twin.piecesPlaced + 1);
+  assert.equal(cycle.addLog(undefined, { tended: true }), true);
+  assert.equal(cycle.tendedCount, 1);
+  cycle.advance(80); twin.addLog(); twin.addLog(undefined, { tended: true }); twin.advance(80);
+  assert.deepEqual(physicalState(cycle), physicalState(twin));
+  cycle.reset(42);
+  assert.equal(cycle.feedCount, 0); assert.equal(cycle.tendedCount, 0);
+  assert.equal(cycle.piecesPlaced, new BurnCycle(42).piecesPlaced);
+});
+
 test('every log carries its own moisture and initial moisture survives drying', () => {
   const cycle = new BurnCycle(42);
   assert.equal(new Set(cycle.logs.map(log => log.moisture)).size, cycle.logs.length);

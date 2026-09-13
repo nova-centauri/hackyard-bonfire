@@ -18,9 +18,14 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
 ## Where things are
 
 - `src/main.js` — page shell, study navigation, sound controls, preferences.
+- `src/fire-stats.js` — quiet lifetime counts (here and everyone), local totals persisted with preferences.
+- `src/global-stats.js` — site-wide fires/fuel/burn minutes; `/api/stats` if present, otherwise Abacus.
 - `src/github-log.js` — footer GitHub link and commit log (`public/github-log.json` for prompt backfill).
 - `src/scene.js` — `BonfireViewer`: renderer, composer, quality application,
   frame loop, scene construction (`buildScene`).
+- `src/fire-scenes.js` — pickable places (pit, home), mouth
+  budgets and the hearth burn-cycle wrapper.
+- `src/fire-sets.js` — indoor set dressing, mouth colliders, particle clip.
 - `src/quality.js` — LoD tiers, size cap, frame-pacing governor (pure).
 - `src/lifecycle.js` — burn clock: fuel, heat, moisture, feed queue, tending.
 - `src/fuel-types.js` — kinds (logs, named woods, kindling, plank, stump,
