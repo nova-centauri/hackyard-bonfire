@@ -16,6 +16,7 @@ export function createVolume(kind, config, depthTexture) {
  const animatedSmoke=smoke&&config.animated;
  const steps=smoke?(animatedSmoke?40:52):88;
  const bounds=smoke?[new THREE.Vector3(-2.7,.7,-2.5),new THREE.Vector3(3.7,6.8,2.5)]:[new THREE.Vector3(-1.8,.12,-1.8),new THREE.Vector3(1.8,4.3*config.flameScale,1.8)];
+ if(config.mouth){const {width,height,depth}=config.mouth;bounds[0].set(-width/2,0,-depth/2);bounds[1].set(width/2,height,depth/2);}
  const size=bounds[1].clone().sub(bounds[0]);
  const geometry=new THREE.BoxGeometry(size.x,size.y,size.z);geometry.translate(...bounds[0].clone().add(bounds[1]).multiplyScalar(.5).toArray());
  const material=new THREE.ShaderMaterial({

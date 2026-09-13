@@ -14,6 +14,26 @@ cardboard, crumpled newspaper, named woods, and the rest). Leave focus mode and 
 that; **Focus mode** in the header returns to it. Turn on **Sound** once and
 it comes back on the next visit with your first click.
 
+The **Scene** picker stays at the top left, including in focus mode. Choose
+the original outdoor pit, a home brick fireplace, a grand stone fireplace,
+or a small wood stove. Switching always starts a new fire, including when
+returning to a scene: fuel, queue, coals, ash and the settled pile are discarded.
+Pause, burn speed, sound and automatic tending keep their current settings.
+
+| Scene | Maximum pieces | Fuel that fits |
+| --- | ---: | --- |
+| Outdoor pit | 7 | All existing fuel types and sizes |
+| Home fireplace | 5 | Shorter cuts; no stumps |
+| Grand fireplace | 6 | Larger cuts; no stumps |
+| Wood stove | 3 | Small logs and kindling only |
+
+Indoor cuts are limited in length and thickness, with a low initial stack.
+The same limits apply to the queue, manual additions, random fuel and automatic
+tending. A full mouth accepts more fuel once a piece becomes ash. Fixed mouth
+contacts contain settling wood, and flames, smoke, steam and sparks stay in
+the opening. The original still-study gallery keeps its outdoor compositions;
+choosing another place there returns to the animated fire.
+
 ## Run
 
 ```sh

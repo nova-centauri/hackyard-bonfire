@@ -676,7 +676,7 @@ function lowestPlacement(pose, contacts) {
 // solved symmetrically; an older log can fall onto and be caught by a newer one.
 // The prepared pile uses local crossing heights, not each lower log's tallest
 // endpoint, so an angled branch does not levitate the entire layer above it.
-function initializePose(pose, existing, height) {
+function initializePose(pose, existing, height, arrivalLift = .92) {
   const yaw = pose.yaw;
   for (let iteration = 0; iteration < 4; iteration++) {
     syncPose(pose);
@@ -685,7 +685,7 @@ function initializePose(pose, existing, height) {
     const axis = new THREE.Vector3(Math.cos(yaw) * Math.cos(rest.pitch), Math.sin(rest.pitch), Math.sin(yaw) * Math.cos(rest.pitch));
     pose.quaternion.setFromUnitVectors(UP, axis);
   }
-  if (!pose.initial) pose.y += .92;
+  if (!pose.initial) pose.y += arrivalLift;
   pose.initialized = true; pose.fallFrom = pose.y; pose.inFlight = !pose.initial;
   syncPose(pose);
 }
@@ -795,7 +795,7 @@ export function updateLogSettling(state, cycle, time, groundHeight = () => 0) {
   const existing = state.logs.filter(p => p.live && p.initialized && !p.inFlight);
   const arrivalTime = pose => cycle.logs[pose.slot].addedAt >= 0 ? cycle.logs[pose.slot].addedAt + 1 : 0;
   arrivals.sort((a, b) => arrivalTime(a) - arrivalTime(b) || a.slot - b.slot);
-  for (const pose of arrivals) { initializePose(pose, existing, groundHeight); existing.push(pose); }
+  for (const pose of arrivals) { initializePose(pose, existing, groundHeight, state.arrivalLift); existing.push(pose); }
   const liveIds = new Set(state.logs.filter(p => p.live).map(p => p.id));
   for (const pose of state.logs) if (pose.live && pose.supportIds.some(id => !liveIds.has(id))) wake(pose);
   ageFragments(state, cycle, elapsed);

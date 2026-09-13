@@ -126,7 +126,7 @@ body.focus-mode{overflow:hidden;background:#000}
 body.focus-mode #app{height:100dvh;min-height:0}
 body.focus-mode main{height:100%;min-height:0}
 body.focus-mode .stage{flex:1;height:100dvh;min-height:0;max-height:none}
-body.focus-mode .masthead,body.focus-mode footer,body.focus-mode main>:not(.stage),body.focus-mode .stage>:not(#canvas-container):not(.loading){display:none!important}
+body.focus-mode .masthead,body.focus-mode footer,body.focus-mode main>:not(.stage),body.focus-mode .stage>:not(#canvas-container):not(.loading):not(.scene-controls){display:none!important}
 body.focus-mode:not(.focus-pointer-active) canvas{cursor:none;outline:none}
 
 /* Repo link and collapsed commit log stay in the footer; the list opens upward. */
@@ -145,3 +145,26 @@ footer{position:relative;height:auto;min-height:36px;gap:14px}
 .github-prompt{margin:6px 0 0;font-size:11px;line-height:1.45;color:#cbb792}
 .github-prompt.empty,.github-status{margin:6px 0 0;font-size:11px;color:#6a7360;font-style:italic}
 @media(max-width:700px){footer{min-height:33px;gap:10px}.footer-tag{display:none}.github-presence details[open] .github-commits{left:auto;right:0;transform:none}}
+
+/* The place picker remains reachable while watching, including in focus mode. */
+.scene-controls{position:absolute;z-index:5;left:38px;top:24px;max-width:340px;display:flex;flex-direction:column;gap:7px}
+.scene-controls label{display:flex;align-items:center;gap:12px;width:max-content;padding:6px 9px 6px 12px;border:1px solid #ffffff25;border-radius:6px;background:#171713dc;color:#b8b4a7;font-size:11px;backdrop-filter:blur(12px)}
+.scene-controls select{max-width:200px;min-height:32px;background:#292720;border:1px solid #ffffff20;border-radius:4px;color:#f1dcc0;padding:5px 26px 5px 9px;font:12px system-ui;cursor:pointer}
+.scene-controls select:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+#scene-limits{font:10px/1.5 system-ui;color:#aea695;max-width:300px;text-shadow:0 1px 3px #000}
+.study-caption{top:134px}
+.fuel-timeline{grid-template-columns:repeat(var(--fuel-slot-count,7),minmax(0,1fr))}
+.fuel-card[hidden]{display:none}
+body.focus-mode .scene-controls{position:fixed;left:max(24px,env(safe-area-inset-left));top:max(22px,env(safe-area-inset-top));opacity:.5;transition:opacity .2s}
+body.focus-mode .scene-controls:hover,body.focus-mode .scene-controls:focus-within,body.focus-mode.focus-pointer-active .scene-controls{opacity:1}
+body.focus-mode #scene-limits{max-width:240px}
+@media(max-width:700px){
+ .scene-controls{left:18px;top:17px;max-width:calc(100% - 120px)}
+ .scene-controls label{gap:7px;padding:4px 6px;font-size:10px}
+ .scene-controls select{max-width:155px;min-height:34px;font-size:11px;padding:4px}
+ #scene-limits{font-size:9px;max-width:230px}
+ .study-caption{top:126px}
+ body.focus-mode .scene-controls{left:max(17px,env(safe-area-inset-left));top:max(17px,env(safe-area-inset-top))}
+ .fuel-timeline{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .fuel-card:last-child{grid-column:auto}
+}

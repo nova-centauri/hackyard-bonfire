@@ -16,6 +16,15 @@ viewer: no accounts, no setup, no required settings.
 
 Done in this pass:
 
+- Pickable fire settings: the original outdoor pit, home brick fireplace,
+  grand stone fireplace, and compact wood stove. The picker stays available
+  in focus mode. Every place change discards all cached studies and starts a
+  new fire; no fuel, queue, coal/ash state, fragments or settled pile survives.
+  Scene admission and placement wrap the existing burn engine; its equations
+  and clocks are unchanged. Stove: 3 small pieces; home: 5 short cuts; grand:
+  6 larger cuts; pit: the original 7 slots and all fuel types. Indoor mouths
+  bound wood and gas, and their cuts apply to manual and automatic additions.
+
 - Idle simulation cost cut from about 5.5 ms to about 1 ms per frame; the
   settled pile sleeps and wood sinks continuously as it burns instead of
   hovering and dropping (`docs/rendering-and-performance.md`).
@@ -101,6 +110,13 @@ soil. This remains an ambient campfire, with no new controls or activities.
   mapping; wood textures are in, so this is the remaining material gap.
 
 ## Work log
+
+- 2026-09-13 — Added four fire settings, a focus-accessible picker, fixed mouth
+  contacts, appropriate wood cuts and slot budgets, plus complete scene
+  disposal on switching. Original still studies retain their outdoor sets.
+  Added regression coverage for all transition pairs, all fuel admission
+  paths, reset state, unused shader slots, and 75 burn minutes of tending
+  with real settling in each indoor mouth.
 
 - 2026-09-12 — Physics sleep and continuous settling; exact ring ground
   contact; rolling resistance in the solver; coarser depth invalidation.
