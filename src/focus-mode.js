@@ -1,10 +1,10 @@
 // Keep the scene, camera and sound alive while the surrounding interface rests.
-// The corner gear that brings the menus back is always present in focus mode
-// at a low resting opacity and always clickable; any pointer, key, wheel or
-// touch activity brings it up fully for a while. It used to vanish outright
-// after a short idle and whenever the pointer crossed the window edge, which
-// is exactly where a viewer reaching for it goes.
-const GEAR_IDLE_MS = 4000, GEAR_ENTRY_MS = 6000;
+// Focus chrome (gear, random feed, scene picker) fades completely away when idle;
+// any pointer, key, wheel or touch activity brings it back for a while. CSS
+// takes pointer-events off while it is gone so the fire stays clickable
+// underneath. Leaving the window starts the idle timer rather than hiding at
+// the edge, which is where a viewer reaching for the corner goes.
+export const GEAR_IDLE_MS = 4000, GEAR_ENTRY_MS = 6000;
 
 export function mountFocusMode(viewer, { initial = false, onChange } = {}) {
   const button = document.querySelector('#focus-mode');

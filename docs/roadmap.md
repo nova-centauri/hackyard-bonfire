@@ -81,8 +81,8 @@ Done in this pass:
 - Long-session variety, first pass: a seeded restlessness envelope gives the
   pops (and the audio's crackle) lively spells and lulls; loud pops with
   ember showers every few minutes; firelight with calm and lively spells and
-  brief dips. The page opens in focus mode with a gear that is always
-  visible; the poking stick is a modelled branch and pushes harder.
+  brief dips. The page opens in focus mode; chrome fades completely away while
+  watching and returns on activity; the poking stick is a modelled branch and pushes harder.
 
 ## This pass (watchable fire)
 
@@ -122,6 +122,10 @@ soil. This remains an ambient campfire, with no new controls or activities.
 
 ## Work log
 
+- 2026-09-13 — Focus chrome (gear, random-feed plus, scene picker) fades to
+  opacity 0 with pointer-events none after idle; activity or keyboard focus
+  brings it back. The idle timer still starts on window-edge leave rather
+  than hiding at once.
 - 2026-09-13 — Pit default look is a little higher, flame more centered.
   Indoor orbit cannot pass the floor or a room-height ceiling stop; outdoor
   pan is clamped off the dirt. Home framing is unchanged.

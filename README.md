@@ -7,15 +7,16 @@ is generated locally in WebGL 2 with no accounts, no setup and no assets
 fetched beyond the page and one bundled recording.
 
 The root URL opens study 08, *Wild draft*, edge to edge in focus mode with
-the menus gone. The gear in the top-right corner rests faintly, brightens
-when you move, and brings the menus back; so does **Esc**. A matching plus
-beside it drops a random piece of fuel (log, kindling, pallet slat,
-cardboard, crumpled newspaper, named woods, and the rest). Leave focus mode and the page remembers
+the menus gone. The gear, plus and scene picker fade completely away after a
+few seconds of stillness; move, click or press a key and they come back.
+The gear brings the menus back; so does **Esc**. A matching plus beside it
+drops a random piece of fuel (log, kindling, pallet slat, cardboard,
+crumpled newspaper, named woods, and the rest). Leave focus mode and the page remembers
 that; **Focus mode** in the header returns to it. Turn on **Sound** once and
 it comes back on the next visit with your first click.
 
-The **Scene** picker stays at the top left, including in focus mode. Choose
-the outdoor pit (the default) or a home brick fireplace.
+The **Scene** picker stays at the top left in focus mode and fades with the
+other chrome. Choose the outdoor pit (the default) or a home brick fireplace.
 Switching always starts a new fire, including when
 returning to a scene: fuel, queue, coals, ash and the settled pile are discarded.
 Pause, burn speed, sound and automatic tending keep their current settings.
