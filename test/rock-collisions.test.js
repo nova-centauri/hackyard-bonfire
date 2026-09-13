@@ -16,6 +16,7 @@ const wall = (x = 0, width = 2.4) => createStoneCollider(new THREE.BoxGeometry(w
 
 test('rendered rocks expose distinct fixed colliders at their generated world positions', () => {
   const parent = new THREE.Group(), stones = addStoneRing(parent, { seed: 42, hybrid: true });
+  assert.equal(stones.userData.placements.length, 21);
   assert.equal(stones.userData.colliders.length, stones.userData.placements.length);
   for (const [i, collider] of stones.userData.colliders.entries()) {
     const placement = stones.userData.placements[i];
@@ -25,6 +26,41 @@ test('rendered rocks expose distinct fixed colliders at their generated world po
     assert.ok(collider.worldPoints.every(point => collider.bounds.containsPoint(point)));
   }
   stones.geometry.dispose(); stones.material.dispose();
+});
+
+test('the reduced stone ring is buried, closes around the pit and keeps seeded weathering stable', () => {
+  const stones = addStoneRing(new THREE.Group(), { seed: 22, hybrid: true });
+  const repeat = addStoneRing(new THREE.Group(), { seed: 22, hybrid: true });
+  const { placements, colliders } = stones.userData;
+  assert.deepEqual(placements, repeat.userData.placements);
+  assert.deepEqual(stones.geometry.attributes.position.array, repeat.geometry.attributes.position.array);
+  assert.deepEqual(stones.geometry.attributes.color.array, repeat.geometry.attributes.color.array);
+  assert.ok(stones.geometry.index.count / 3 < 7000, 'the whole ring stays within its triangle budget');
+  for (let i = 0; i < placements.length; i++) {
+    const stone = colliders[i], next = colliders[(i + 1) % colliders.length];
+    const placement = placements[i];
+    assert.ok(stone.bounds.min.y < groundHeight(placement.x, placement.z) - .025, 'the collider follows the buried stone');
+    if (i % 2 === 0) {
+      const smallerNeighbor = placements[i === placements.length - 1 ? i - 1 : i + 1];
+      assert.ok(placement.width > smallerNeighbor.width, 'alternating broad rocks replace the removed stones');
+    }
+    const tangent = next.position.clone().sub(stone.position).setY(0).normalize();
+    const end = Math.max(...stone.worldPoints.map(point => point.dot(tangent)));
+    const start = Math.min(...next.worldPoints.map(point => point.dot(tangent)));
+    assert.ok(start < end, 'neighboring silhouettes close the ring');
+  }
+  const position = stones.geometry.attributes.position, normal = stones.geometry.attributes.normal, color = stones.geometry.attributes.color;
+  let inside = 0, outside = 0, insideCount = 0, outsideCount = 0;
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i), y = position.getY(i), z = position.getZ(i);
+    if (y < groundHeight(x, z) + .025) continue;
+    const facing = (-normal.getX(i) * x - normal.getZ(i) * z) / Math.hypot(x, z);
+    const luminance = color.getX(i) * .2126 + color.getY(i) * .7152 + color.getZ(i) * .0722;
+    if (facing > .6) { inside += luminance; insideCount++; }
+    if (facing < -.6) { outside += luminance; outsideCount++; }
+  }
+  assert.ok(inside / insideCount < outside / outsideCount * .7, 'visible inward faces carry the baked scorching');
+  for (const ring of [stones, repeat]) { ring.geometry.dispose(); ring.material.dispose(); }
 });
 
 test('a fixed stone stops a rolling log and keeps its own shape and position unchanged', () => {

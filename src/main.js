@@ -151,6 +151,9 @@ try{
   stage.dataset.renderSize=`${viewer.renderSize.x}x${viewer.renderSize.y}`;
   stage.dataset.qualityTier=viewer.governor.tier;stage.dataset.fireSteps=viewer.current.volumes.find(v=>v.userData.volumeKind==='fire')?.material.uniforms.uSteps?.value??'';
   stage.dataset.drawCalls=viewer.renderer.info.render.calls;
+  stage.dataset.triangles=viewer.renderer.info.render.triangles;
+  stage.dataset.gpuGeometries=viewer.renderer.info.memory.geometries;
+  stage.dataset.gpuTextures=viewer.renderer.info.memory.textures;
   stage.dataset.depthPasses=viewer.depthPassCount;
   stage.dataset.shaderErrors=viewer.shaderErrors.length;
   stage.dataset.impactCount=viewer.current.burnVisuals?.impactSerial||0;

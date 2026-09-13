@@ -286,7 +286,14 @@ export class BonfireViewer {
     const scale=view==='logs'?.76:view==='coals'?.62:1;
     this.controls.target.fromArray(view==='full'?place.target:[0,view==='coals'?.25:.6,0]);
     this.camera.position.fromArray(place.camera).multiplyScalar(scale);
-    if(this.camera.aspect<1)this.camera.position.z*=1.25;
+    if(this.camera.aspect<1){
+      // Fit the raised landing and mantel in portrait, where a fixed zoom
+      // multiplier cropped both sides of the room. Close views fit the mouth.
+      const width=view==='full'?place.mouth.width+2.14:place.mouth.width*(view==='coals'?.9:1.05);
+      const halfAngle=Math.tan(THREE.MathUtils.degToRad(this.camera.fov)*.5);
+      this.camera.position.z=Math.max(this.camera.position.z,width*.55/(halfAngle*this.camera.aspect)+place.mouth.depth/2+(view==='full'?1.2:.2));
+    }
+    this.controls.maxDistance=Math.max(15,this.camera.position.distanceTo(this.controls.target)+.5);
   }
   else if(view==='logs'){this.camera.position.set(3.3,2.5,4.6);this.controls.target.set(.03,.94,.15);}
   else if(view==='coals'){this.camera.position.set(2.65,1.65,3.15);this.controls.target.set(.05,.35,.6);}
@@ -408,25 +415,29 @@ export class BonfireViewer {
   const opaque=new THREE.Group();scene.add(opaque);
   const set=indoor?addFireSet(opaque,fireScene):null;
   const wood=woodTextures(config.seed,mode);
-  const groundMat=new THREE.MeshStandardMaterial({color:hybrid?'#000000':config.ground,roughness:mode===3?.2:1,metalness:mode===3?.65:0});
-  const floor=mesh(opaque,new THREE.PlaneGeometry(200,200),groundMat);floor.rotation.x=-Math.PI/2;floor.position.y=hybrid?-.4:-.11;floor.castShadow=false;floor.visible=!indoor;
-  const dirtMat=new THREE.MeshStandardMaterial({color:mode===2?'#aaa69a':mode===1?'#303d4a':'#151512',roughness:1});
-  const dirtGeo=new THREE.CylinderGeometry(2.32,2.5,.16,mode===1?11:70);
-  if(mode===0||mode===4){const p=dirtGeo.attributes.position;for(let i=0;i<p.count;i++){const a=Math.atan2(p.getZ(i),p.getX(i)),f=1+Math.sin(a*7)*.024+Math.sin(a*13)*.014;p.setX(i,p.getX(i)*f);p.setZ(i,p.getZ(i)*f);}dirtGeo.computeVertexNormals();}
-  const dirt=mesh(opaque,dirtGeo,dirtMat,V(0,-.09,0));
-  let ashSurface=set?.surface||dirt;
-  if(indoor)dirt.visible=false;
-  else if(hybrid){dirt.visible=false;ashSurface=addDirtClearing(opaque,config.seed);}
-  if(mode===3)dirt.material=new THREE.MeshStandardMaterial({color:'#121820',roughness:.23,metalness:.8});
+  // Build only the ground this scene uses. Indoor switches used to allocate
+  // a hidden outdoor floor, dirt cylinder, debris and empty twig GPU buffers.
+  let ashSurface=set?.surface;
+  if(!indoor){
+    const groundMat=new THREE.MeshStandardMaterial({color:hybrid?'#000000':config.ground,roughness:mode===3?.2:1,metalness:mode===3?.65:0});
+    const floor=mesh(opaque,new THREE.PlaneGeometry(200,200),groundMat);floor.rotation.x=-Math.PI/2;floor.position.y=hybrid?-.4:-.11;floor.castShadow=false;
+    if(hybrid)ashSurface=addDirtClearing(opaque,config.seed);
+    else{
+      const dirtMat=new THREE.MeshStandardMaterial({color:mode===3?'#121820':mode===2?'#aaa69a':mode===1?'#303d4a':'#151512',roughness:mode===3?.23:1,metalness:mode===3?.8:0});
+      const dirtGeo=new THREE.CylinderGeometry(2.32,2.5,.16,mode===1?11:70);
+      if(mode===0||mode===4){const p=dirtGeo.attributes.position;for(let i=0;i<p.count;i++){const a=Math.atan2(p.getZ(i),p.getX(i)),f=1+Math.sin(a*7)*.024+Math.sin(a*13)*.014;p.setX(i,p.getX(i)*f);p.setZ(i,p.getZ(i)*f);}dirtGeo.computeVertexNormals();}
+      ashSurface=mesh(opaque,dirtGeo,dirtMat,V(0,-.09,0));
+    }
+  }
   const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':hybrid?'#c4b496':'#9cadc6',mode===2&&!hybrid?'#827f72':'#1c1612',hybrid?.2:mode===2?2.3:.65);scene.add(ambient);
-  if(indoor&&hybrid)ambient.intensity=.55;
+  if(indoor&&hybrid){ambient.intensity=.12;ambient.color.set('#aa8b70');ambient.groundColor.set('#100c09');}
   const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':hybrid?'#c8c0d2':'#b2c9e4',hybrid?.28:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=!hybrid;
   moon.shadow.mapSize.set(2048,2048);moon.shadow.camera.left=-4;moon.shadow.camera.right=4;moon.shadow.camera.top=5;moon.shadow.camera.bottom=-4;moon.shadow.normalBias=.035;scene.add(moon);
-  if(indoor&&hybrid){moon.position.set(-3,5,7);moon.intensity=.65;}
-  const light=new THREE.PointLight('#ff9a43',hybrid?22:mode===2?7:21,hybrid?8.8:9,2);light.position.set(0,hybrid?.85:1.45,0);scene.add(light);
+  if(indoor&&hybrid){moon.position.set(-3,5,7);moon.intensity=.11;moon.color.set('#a89383');}
+  const light=new THREE.PointLight('#ff9a43',hybrid?(indoor?13:22):mode===2?7:21,hybrid?(indoor?6:8.8):9,2);light.position.set(0,hybrid?.85:1.45,0);scene.add(light);
   if(hybrid){light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.12;light.shadow.camera.far=8.8;light.shadow.bias=-.0006;light.shadow.normalBias=.016;light.shadow.radius=1.6;}
-  const coreLight=new THREE.PointLight('#ff4a12',hybrid?5.6:8,hybrid?3.2:5,2);coreLight.position.set(0,hybrid?.16:.38,.08);scene.add(coreLight);
-  const rim=new THREE.DirectionalLight('#ffbe70',hybrid?.07:mode===3?2:.4);rim.position.set(0,3,-5);scene.add(rim);
+  const coreLight=new THREE.PointLight('#ff4a12',hybrid?(indoor?2.4:5.6):8,hybrid?(indoor?2.5:3.2):5,2);coreLight.position.set(0,hybrid?.16:.38,.08);scene.add(coreLight);
+  if(!indoor){const rim=new THREE.DirectionalLight('#ffbe70',hybrid?.07:mode===3?2:.4);rim.position.set(0,3,-5);scene.add(rim);}
   const barkMat=new THREE.MeshStandardMaterial({map:wood.bark,bumpMap:wood.bark,bumpScale:.04,roughness:.99,emissiveMap:wood.emission,emissive:'#ffb68b',emissiveIntensity:mode===4?1.65:.9});
   const endMat=new THREE.MeshStandardMaterial({map:wood.end,bumpMap:wood.end,bumpScale:.025,roughness:.95,emissiveMap:wood.endGlow,emissive:'#ff5310',emissiveIntensity:1.4});
   const exposedMat=new THREE.MeshStandardMaterial({map:wood.exposed,bumpMap:wood.exposed,bumpScale:.006,roughness:.96,emissiveMap:wood.emission,emissive:'#ff6319',emissiveIntensity:.6});
@@ -437,7 +448,7 @@ export class BonfireViewer {
   if(mode===4){for(let i=3;i<logDefs.length;i++){logDefs[i][0][1]*=.8;logDefs[i][1][1]*=.58;}}
   const cycle=hybrid?createSceneCycle(fireScene.id,this.fireSeed):null,logMeshes=[],steamOrigins=[];
   const fuelMaterials={barkMat,endMat,exposedMat};
-  const buildFuel=(li,fuel)=>createSceneFuelMesh({definition:logDefs[li],fuelType:fuel?.fuelType||(fireScene.id==='stove'?'small-log':'log'),seed:hybrid?cycle.seed+fuel.id*7919:config.seed+li*7919,mode,hybrid,...(hybrid?{}:{rand})},fuelMaterials);
+  const buildFuel=(li,fuel)=>createSceneFuelMesh({definition:logDefs[li],fuelType:fuel?.fuelType||'log',seed:hybrid?cycle.seed+fuel.id*7919:config.seed+li*7919,mode,hybrid,...(hybrid?{}:{rand})},fuelMaterials);
   for(let li=0;li<logDefs.length;li++) {
     const [aa,bb]=logDefs[li],a=new THREE.Vector3(...aa),b=new THREE.Vector3(...bb);
     const dir=b.clone().sub(a);
@@ -458,15 +469,17 @@ export class BonfireViewer {
   const stoneRing=indoor?null:addStoneRing(opaque,{seed:config.seed,mode,hybrid});
   // Handles for the texture loader: each procedural texture and the slots it fills.
   const textureRegistry={bark:{map:wood.bark,bump:wood.bark,emissive:wood.emission},endGrain:{map:wood.end,bump:wood.end,emissive:wood.endGlow},
-    exposedWood:{map:wood.exposed,bump:wood.exposed},soil:{map:ashSurface.material.map,bump:ashSurface.material.bumpMap},smokePuff:{map:this.cloud}};
-  const debris=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),new THREE.MeshStandardMaterial({color:mode===2?'#777267':'#777067',roughness:1}),310);
-  for(let i=0;i<310;i++){
-    const a=rand()*Math.PI*2,r=Math.sqrt(rand())*3.25;
-    obj.position.set(Math.cos(a)*r,-.035+rand()*.05,Math.sin(a)*r);
-    if(hybrid)obj.position.y=groundHeight(obj.position.x,obj.position.z)+.006;obj.rotation.set(rand()*3,rand()*3,rand()*3);
-    const s=.004+rand()*.035;obj.scale.set(s,s*.35,s*1.5);obj.updateMatrix();debris.setMatrixAt(i,obj.matrix);
-  }opaque.add(debris);debris.visible=!indoor;
-  const twigMat=new THREE.MeshStandardMaterial({color:mode===2?'#32291f':'#161410',roughness:1,emissive:'#7d1d05',emissiveIntensity:.55});
+    exposedWood:{map:wood.exposed,bump:wood.exposed},...(!indoor?{soil:{map:ashSurface.material.map,bump:ashSurface.material.bumpMap}}:set.textureRegistry),smokePuff:{map:this.cloud}};
+  if(!indoor){
+    const debris=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),new THREE.MeshStandardMaterial({color:mode===2?'#777267':'#777067',roughness:1}),310);
+    for(let i=0;i<310;i++){
+      const a=rand()*Math.PI*2,r=Math.sqrt(rand())*3.25;
+      obj.position.set(Math.cos(a)*r,-.035+rand()*.05,Math.sin(a)*r);
+      if(hybrid)obj.position.y=groundHeight(obj.position.x,obj.position.z)+.006;obj.rotation.set(rand()*3,rand()*3,rand()*3);
+      const s=.004+rand()*.035;obj.scale.set(s,s*.35,s*1.5);obj.updateMatrix();debris.setMatrixAt(i,obj.matrix);
+    }opaque.add(debris);
+  }
+  const twigMat=indoor?null:new THREE.MeshStandardMaterial({color:mode===2?'#32291f':'#161410',roughness:1,emissive:'#7d1d05',emissiveIntensity:.55});
   const twigs=new THREE.Group();opaque.add(twigs);
   for(let k=0;k<(indoor?0:26);k++){
     const a=V((rand()-.5)*2.9,.13+rand()*.3,(rand()-.5)*2.7),b=a.clone().add(V((rand()-.5)*.95,.15+rand()*.7,(rand()-.5)*.75));
@@ -496,7 +509,7 @@ export class BonfireViewer {
   const embers=createEmbers({seed:config.seed,sources:fireVolume?.material.uniforms.uSources.value,fuel:fireVolume?.material.uniforms.uFuel.value});
   layers.sparks.add(embers);
   if(hybrid){twigs.position.y=-.16;layers.flames.children.forEach(m=>{if(m.userData.twigFlame)m.position.y=-.16;});}
-  const twigInstances=createTwigInstances(twigs,layers);
+  const twigInstances=indoor?null:createTwigInstances(twigs,layers);
   const study={fireScene,groundHeight:sceneGround,rockColliders:set?.colliders||stoneRing.userData.colliders,arrivalLift:indoor?.28:.92,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0,fuelMaterials,
     proceduralTextures:new Set(Object.values(textureRegistry).flatMap(handles=>Object.values(handles)).filter(texture=>texture?.isTexture)),
     shadowLights:[light,moon].filter(l=>l.castShadow),steam,embers,twigInstances,textureRegistry};

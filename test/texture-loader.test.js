@@ -91,6 +91,81 @@ test('a normal map still applies when the albedo decodes first', async () => {
   assert.equal(material.bumpMap, null);
 });
 
+const surfaceSlots = ['bark', 'soil', 'hearthWall', 'hearthBrick', 'hearthFirebox', 'hearthStone'];
+
+function queuedSurfaceTextures(slot, roleNames, shared = true) {
+  const map = new THREE.Texture(), bump = shared ? map : new THREE.Texture();
+  const material = new THREE.MeshStandardMaterial({ map, bumpMap: bump });
+  const materials = [material, material.clone()], handles = { map, bump }, pending = {}, loaded = {}, disposed = new Set();
+  for (const texture of new Set([map, bump])) texture.addEventListener('dispose', () => disposed.add(texture));
+  const loader = { load(url, onLoad, _progress, onError) {
+    const role = url.split('/').at(-1);
+    pending[role] = (fail = false) => {
+      if (fail) return onError(new Error('missing'));
+      const texture = loaded[role] = new THREE.Texture();
+      texture.addEventListener('dispose', () => disposed.add(texture));
+      onLoad(texture);
+    };
+  } };
+  const promise = loadAuthoredTextures({ [slot]: Object.fromEntries(roleNames.map(role => [role, role])) },
+    { [slot]: handles }, () => materials, { loader });
+  return { map, bump, materials, handles, pending, loaded, disposed, promise };
+}
+
+test('shared wood/soil and hearth map/bump slots stay independent in either decode order', async () => {
+  for (const slot of surfaceSlots) for (const shared of [true, false]) for (const order of [['map', 'bump'], ['bump', 'map']]) {
+    const state = queuedSurfaceTextures(slot, ['map', 'bump'], shared);
+    for (const role of order) state.pending[role]();
+    assert.deepEqual(await state.promise, { [slot]: { map: 'applied', bump: 'applied' } });
+    for (const material of state.materials) {
+      assert.strictEqual(material.map, state.loaded.map, `${slot}: albedo survives ${order}`);
+      assert.strictEqual(material.bumpMap, state.loaded.bump, `${slot}: bump survives ${order}`);
+    }
+    assert.strictEqual(state.handles.map, state.loaded.map);
+    assert.strictEqual(state.handles.bump, state.loaded.bump);
+    assert.equal(state.loaded.map.colorSpace, THREE.SRGBColorSpace);
+    assert.equal(state.loaded.bump.colorSpace, THREE.NoColorSpace);
+    assert.equal(state.disposed.size, 0, 'live authored maps and study-owned procedural maps are retained');
+  }
+});
+
+test('wood/soil and hearth normal maps override bumps in every decode order without leaking the replaced bump', async () => {
+  const orders = [
+    ['map', 'bump', 'normal'], ['map', 'normal', 'bump'],
+    ['bump', 'map', 'normal'], ['bump', 'normal', 'map'],
+    ['normal', 'map', 'bump'], ['normal', 'bump', 'map'],
+  ];
+  for (const slot of surfaceSlots) for (const shared of [true, false]) for (const order of orders) {
+    const state = queuedSurfaceTextures(slot, ['map', 'bump', 'normal'], shared);
+    for (const role of order) state.pending[role]();
+    const report = await state.promise;
+    assert.equal(report[slot].map, 'applied'); assert.equal(report[slot].normal, 'applied');
+    assert.equal(report[slot].bump, order.indexOf('bump') < order.indexOf('normal') ? 'applied' : 'unused');
+    for (const material of state.materials) {
+      assert.strictEqual(material.map, state.loaded.map, `${slot}: albedo survives ${order}`);
+      assert.strictEqual(material.normalMap, state.loaded.normal, `${slot}: normal wins ${order}`);
+      assert.equal(material.bumpMap, null);
+    }
+    assert.strictEqual(state.handles.map, state.loaded.map);
+    assert.strictEqual(state.handles.bump, state.loaded.normal);
+    assert.deepEqual([...state.disposed], [state.loaded.bump], 'only the superseded authored bump is released');
+  }
+});
+
+test('a missing authored normal preserves the working hearth bump', async () => {
+  for (const order of [['bump', 'normal', 'map'], ['normal', 'map', 'bump']]) {
+    const state = queuedSurfaceTextures('hearthFirebox', ['map', 'bump', 'normal']);
+    for (const role of order) state.pending[role](role === 'normal');
+    assert.deepEqual(await state.promise, { hearthFirebox: { map: 'applied', bump: 'applied', normal: 'failed' } });
+    for (const material of state.materials) {
+      assert.strictEqual(material.map, state.loaded.map);
+      assert.strictEqual(material.bumpMap, state.loaded.bump);
+      assert.equal(material.normalMap, null);
+    }
+    assert.equal(state.disposed.size, 0);
+  }
+});
+
 test('authored maps replace a shader uniform that held the procedural texture', async () => {
   const puff = new THREE.Texture();
   const material = new THREE.ShaderMaterial({ uniforms: { uMap: { value: puff } } });

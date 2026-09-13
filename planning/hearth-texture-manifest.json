@@ -1,0 +1,131 @@
+{
+  "status": "optional; no unshipped paths in active runtime manifest",
+  "guide": "planning/hearth-texture-pass.md",
+  "outputRoot": "public/",
+  "orientation": "top-down images; flipY=true; no perspective",
+  "budget": {
+    "allAlbedosBytes": 1000000,
+    "allFilesBytes": 2000000,
+    "decodedRGBAWithMipmapsMiB": 16
+  },
+  "runtimeManifest": {
+    "hearthWall": {
+      "map": "textures/hearth-wall-albedo.webp"
+    },
+    "hearthBrick": {
+      "map": "textures/hearth-brick-albedo.webp",
+      "normal": "textures/hearth-brick-normal.png"
+    },
+    "hearthFirebox": {
+      "map": "textures/hearth-firebox-albedo.webp",
+      "normal": "textures/hearth-firebox-normal.png"
+    },
+    "hearthStone": {
+      "map": "textures/hearth-stone-albedo.webp",
+      "normal": "textures/hearth-stone-normal.png"
+    }
+  },
+  "assets": [
+    {
+      "slot": "hearthWall",
+      "role": "map",
+      "path": "textures/hearth-wall-albedo.webp",
+      "requiredForAuthoredPass": true,
+      "dimensions": [
+        1024,
+        1024
+      ],
+      "format": "WebP RGB quality 85-90",
+      "colorSpace": "sRGB",
+      "wrap": "clamp",
+      "content": "Entire 14x8m elevation: U -7..7m, V -0.7..7.3m; bake dim corners, plaster repairs and low panel detail."
+    },
+    {
+      "slot": "hearthBrick",
+      "role": "map",
+      "path": "textures/hearth-brick-albedo.webp",
+      "requiredForAuthoredPass": true,
+      "dimensions": [
+        512,
+        512
+      ],
+      "format": "WebP RGB quality 85-90",
+      "colorSpace": "sRGB",
+      "wrap": "repeat",
+      "content": "One surface texture per brick face, typical 0.41x0.18m; no brick grid or mortar."
+    },
+    {
+      "slot": "hearthBrick",
+      "role": "normal",
+      "path": "textures/hearth-brick-normal.png",
+      "requiredForAuthoredPass": false,
+      "dimensions": [
+        512,
+        512
+      ],
+      "format": "PNG RGB",
+      "colorSpace": "linear data",
+      "convention": "OpenGL +Y",
+      "wrap": "repeat",
+      "content": "Bake from coherent height; microrelief only; exclude soot and lighting gradients."
+    },
+    {
+      "slot": "hearthFirebox",
+      "role": "map",
+      "path": "textures/hearth-firebox-albedo.webp",
+      "requiredForAuthoredPass": true,
+      "dimensions": [
+        1024,
+        512
+      ],
+      "format": "WebP RGB quality 85-90",
+      "colorSpace": "sRGB",
+      "wrap": "clamp",
+      "content": "Continuous 2.65x1.78m back wall; upper-central soot plume, ash at bottom; no joints; sides sample outer 19% bands."
+    },
+    {
+      "slot": "hearthFirebox",
+      "role": "normal",
+      "path": "textures/hearth-firebox-normal.png",
+      "requiredForAuthoredPass": false,
+      "dimensions": [
+        1024,
+        512
+      ],
+      "format": "PNG RGB",
+      "colorSpace": "linear data",
+      "convention": "OpenGL +Y",
+      "wrap": "clamp",
+      "content": "Bake from coherent height; microrelief only; exclude soot and lighting gradients."
+    },
+    {
+      "slot": "hearthStone",
+      "role": "map",
+      "path": "textures/hearth-stone-albedo.webp",
+      "requiredForAuthoredPass": true,
+      "dimensions": [
+        512,
+        512
+      ],
+      "format": "WebP RGB quality 85-90",
+      "colorSpace": "sRGB",
+      "wrap": "repeat",
+      "content": "One matte slate surface per slab face; seamless low-contrast strata and fine grain."
+    },
+    {
+      "slot": "hearthStone",
+      "role": "normal",
+      "path": "textures/hearth-stone-normal.png",
+      "requiredForAuthoredPass": false,
+      "dimensions": [
+        512,
+        512
+      ],
+      "format": "PNG RGB",
+      "colorSpace": "linear data",
+      "convention": "OpenGL +Y",
+      "wrap": "repeat",
+      "content": "Bake from coherent height; microrelief only; exclude soot and lighting gradients."
+    }
+  ]
+}

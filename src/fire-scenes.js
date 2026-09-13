@@ -11,20 +11,9 @@ export const FIRE_SCENES = Object.freeze([
     limits: '7 pieces · all fuel types', maxPieces: 7, fuelTypes: FUEL_KIND_IDS, mouth: null }),
   define({ id: 'home', label: 'Home fireplace', description: 'Short-cut wood in a warm brick hearth, beneath a simple timber mantel.',
     limits: '5 pieces · short cuts · no stumps', maxPieces: 5, fuelTypes: indoorFuel,
-    mouth: Object.freeze({ width: 2.65, height: 2.35, depth: 1.65 }),
+    mouth: Object.freeze({ width: 2.65, height: 1.78, depth: 1.65 }),
     length: 1.65, radius: .20, maxLength: 1.8, maxRadius: .23,
-    camera: [1.1, 2.1, 8.8], target: [0, 1.35, 0], flameScale: .66 }),
-  define({ id: 'grand', label: 'Grand fireplace', description: 'A broad stone opening, a carved surround, and a generous hearth fire.',
-    limits: '6 pieces · larger cuts · no stumps', maxPieces: 6, fuelTypes: indoorFuel,
-    mouth: Object.freeze({ width: 3.9, height: 3.25, depth: 2.15 }),
-    length: 2.35, radius: .26, maxLength: 2.6, maxRadius: .30,
-    camera: [1.4, 2.8, 11.8], target: [0, 1.65, 0], flameScale: .86 }),
-  define({ id: 'stove', label: 'Wood stove', description: 'A compact cast-iron stove, holding a few small pieces behind its open door.',
-    limits: '3 pieces · small logs and kindling only', maxPieces: 3,
-    fuelTypes: Object.freeze(['small-log', 'kindling']),
-    mouth: Object.freeze({ width: 1.55, height: 1.6, depth: 1.15 }),
-    length: 1.3, radius: .19, maxLength: .9, maxRadius: .13,
-    camera: [1.2, 1.7, 6.6], target: [0, 1.0, 0], flameScale: .43 }),
+    camera: [1.0, 1.65, 7.8], target: [0, .95, 0], flameScale: .66 }),
 ]);
 
 export const getFireScene = id => FIRE_SCENES.find(scene => scene.id === id) || FIRE_SCENES[0];
@@ -85,7 +74,7 @@ class HearthCycle extends BurnCycle {
     return log;
   }
   makeLog(slot, initial = false, fuelType = this.randomFuelType()) {
-    if (this.fireScene && !this.fireScene.fuelTypes.includes(fuelType)) fuelType = this.fireScene.id === 'stove' ? 'small-log' : 'log';
+    if (this.fireScene && !this.fireScene.fuelTypes.includes(fuelType)) fuelType = 'log';
     return this.fitCut(super.makeLog(slot, initial, fuelType));
   }
   addLog(fuelType, options) {

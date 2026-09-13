@@ -16,14 +16,21 @@ viewer: no accounts, no setup, no required settings.
 
 Done in this pass:
 
-- Pickable fire settings: the original outdoor pit, home brick fireplace,
-  grand stone fireplace, and compact wood stove. The picker stays available
+- Pickable fire settings: the outdoor pit (default) and home brick fireplace.
+  Grand Fireplace and Wood Stove have been removed. The picker stays available
   in focus mode. Every place change discards all cached studies and starts a
   new fire; no fuel, queue, coal/ash state, fragments or settled pile survives.
   Scene admission and placement wrap the existing burn engine; its equations
-  and clocks are unchanged. Stove: 3 small pieces; home: 5 short cuts; grand:
-  6 larger cuts; pit: the original 7 slots and all fuel types. Indoor mouths
+  and clocks are unchanged. Home: 5 short cuts; pit: the original 7 slots and
+  all fuel types. Indoor mouths
   bound wood and gas, and their cuts apply to manual and automatic additions.
+- Scene refinement: 21 partly buried, irregular stones with larger alternating
+  sizes, inward scorching, dirt and ash. The ring uses 6,720 triangles instead
+  of 16,560, with static weathering in vertex colors. Home has a 1.78 m opening,
+  raised firebox, real brick back and side walls, and a much darker room with
+  baked plaster detail and soot. Its static set uses nine material batches;
+  indoor scenes skip outdoor ground/debris and twig GPU allocations. Optional
+  authored room textures are specified in `planning/hearth-texture-pass.md`.
 
 - Idle simulation cost cut from about 5.5 ms to about 1 ms per frame; the
   settled pile sleeps and wood sinks continuously as it burns instead of

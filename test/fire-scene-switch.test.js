@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import { BonfireViewer } from '../src/scene.js';
-import { FIRE_SCENES, createSceneCycle } from '../src/fire-scenes.js';
+import { FIRE_SCENES, createSceneCycle, getFireScene } from '../src/fire-scenes.js';
 
 test('every scene transition discards every cached study before starting a fresh fire, even while paused', () => {
   for (const from of FIRE_SCENES) for (const to of FIRE_SCENES) {
@@ -35,8 +36,24 @@ test('every scene transition discards every cached study before starting a fresh
   }
 });
 
-test('selecting the current scene or an unknown scene does not discard the current fire', () => {
-  const viewer = { sceneId: 'pit' };
-  assert.equal(BonfireViewer.prototype.setScene.call(viewer, 'pit'), false);
-  assert.equal(BonfireViewer.prototype.setScene.call(viewer, 'unknown'), false);
+test('selecting the current, removed or unknown scene does not discard the current fire', () => {
+  for (const sceneId of ['pit', 'home']) {
+    const viewer = { sceneId };
+    for (const id of [sceneId, 'grand', 'stove', 'unknown']) {
+      assert.equal(BonfireViewer.prototype.setScene.call(viewer, id), false);
+      assert.equal(viewer.sceneId, sceneId);
+    }
+  }
+});
+
+test('Home whole-fire camera fits the raised landing on a narrow portrait screen', () => {
+  const camera = new THREE.PerspectiveCamera(39, 390 / 844, .1, 60), target = new THREE.Vector3();
+  const viewer = { config: {}, current: { fireScene: getFireScene('home') }, camera,
+    controls: { target, update() { camera.lookAt(target); camera.updateMatrixWorld(); } }, queueRender() {} };
+  BonfireViewer.prototype.setView.call(viewer, 'full');
+  for (const x of [-2.395, 2.395]) for (const y of [-.71, 2.56]) {
+    const corner = new THREE.Vector3(x, y, 1.99).project(camera);
+    assert.ok(Math.abs(corner.x) < 1 && Math.abs(corner.y) < 1, 'the surround and landing fit inside the frame');
+  }
+  assert.ok(camera.position.distanceTo(target) <= viewer.controls.maxDistance, 'orbit limits retain the fitted preset');
 });

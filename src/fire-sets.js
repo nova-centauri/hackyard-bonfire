@@ -1,37 +1,55 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createHearthTextures } from './hearth-textures.js';
 import { createStoneCollider } from './rocks.js';
 import { random } from './textures.js';
 
-const material = (color, metalness = 0, roughness = .92) => new THREE.MeshStandardMaterial({ color, metalness, roughness });
+const material = (color, metalness = 0, roughness = .96) => new THREE.MeshStandardMaterial({ color, metalness, roughness });
 
-function box(parent, size, position, mat) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), mat);
-  mesh.position.set(...position); mesh.castShadow = mesh.receiveShadow = true;
-  parent.add(mesh); return mesh;
+// Room furnishings are static. Merge each material's boxes into one draw,
+// including the brick courses, instead of making a draw per rail or pillar.
+function batch(parent, name, mat, castShadow = true) {
+  const parts = [];
+  return {
+    box(size, position, { color, rotateY = 0, uv } = {}) {
+      const geometry = new THREE.BoxGeometry(...size);
+      geometry.rotateY(rotateY); geometry.translate(...position);
+      if (color) {
+        const values = new Float32Array(geometry.attributes.position.count * 3);
+        for (let i = 0; i < values.length; i += 3) color.toArray(values, i);
+        geometry.setAttribute('color', new THREE.BufferAttribute(values, 3));
+      }
+      if (uv) {
+        const points = geometry.attributes.position, coords = geometry.attributes.uv;
+        for (let i = 0; i < points.count; i++) {
+          const [u, v] = uv(points.getX(i), points.getY(i), points.getZ(i)); coords.setXY(i, u, v);
+        }
+      }
+      parts.push(geometry);
+    },
+    finish() {
+      const geometry = mergeGeometries(parts, false);
+      parts.forEach(part => part.dispose());
+      const mesh = new THREE.Mesh(geometry, mat); mesh.name = name;
+      mesh.castShadow = castShadow; mesh.receiveShadow = true; parent.add(mesh); return mesh;
+    },
+  };
 }
 
-// A few instanced draws provide real joints, depth and irregular brick color.
-function masonry(parent, size, position, color, brickWidth, rowHeight, seed) {
-  const mortar = box(parent, size, position, material('#51443b'));
-  const [width, height, depth] = size, rand = random(seed), bricks = [];
-  const rows = Math.max(1, Math.round(height / rowHeight)), stepY = height / rows;
+// Fit staggered courses exactly between the opening boundaries. Small gaps
+// expose a recessed mortar backing and still read as brick in dim firelight.
+function brickCourses(target, width, height, center, { brickWidth = .41, rowHeight = .18, depth = .075, seed = 14, rotateY = 0, pigment = '#ffffff', uv } = {}) {
+  const rand = random(seed), rows = Math.max(1, Math.round(height / rowHeight)), step = height / rows;
+  const [cx, cy, cz] = center, cos = Math.cos(rotateY), sin = Math.sin(rotateY), tint = new THREE.Color(pigment);
   for (let row = 0; row < rows; row++) {
     for (let left = -width / 2 - (row % 2) * brickWidth / 2; left < width / 2; left += brickWidth) {
       const a = Math.max(-width / 2, left), b = Math.min(width / 2, left + brickWidth);
       if (b - a < .025) continue;
-      bricks.push({ x: (a + b) / 2, y: -height / 2 + (row + .5) * stepY, width: b - a });
+      const x = (a + b) / 2;
+      target.box([b - a - .014, step - .012, depth + rand() * .012], [cx + x * cos, cy - height / 2 + (row + .5) * step, cz - x * sin],
+        { rotateY, color: tint.clone().multiplyScalar(.76 + rand() * .30), uv });
     }
   }
-  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), material(color), bricks.length);
-  const object = new THREE.Object3D(), shade = new THREE.Color(color);
-  bricks.forEach((brick, index) => {
-    object.position.set(position[0] + brick.x, position[1] + brick.y, position[2] + depth / 2 + .017);
-    object.scale.set(brick.width - .018, stepY - .018, .055); object.updateMatrix();
-    mesh.setMatrixAt(index, object.matrix); mesh.setColorAt(index, shade.clone().multiplyScalar(.75 + rand() * .48));
-  });
-  // Instance colors already carry the brick pigment.
-  mesh.material.color.set('#ffffff'); mesh.castShadow = mesh.receiveShadow = true; parent.add(mesh);
-  return mortar;
 }
 
 // The mouth is a loading boundary, including its open front. Convex boxes
@@ -55,68 +73,92 @@ export function mouthColliders(scene) {
 
 export function addFireSet(parent, scene) {
   const group = new THREE.Group(); group.name = scene.label; parent.add(group);
-  const { width: w, height: h, depth: d } = scene.mouth;
-  const iron = material('#24262a', .65, .55), firebrick = material('#393029');
-  const stone = material(scene.id === 'grand' ? '#a29178' : '#5c5750');
-  const stove = scene.id === 'stove';
-  const floor = box(group, [20, .18, 16], [0, stove ? -.67 : -.37, 3], material('#302a24'));
-  floor.castShadow = false;
-  box(group, [w + 1.8, .26, d + 1.35], [0, stove ? -.43 : -.13, .26], stone);
-  const surface = new THREE.Mesh(new THREE.PlaneGeometry(w, d), material('#302b26'));
-  surface.rotation.x = -Math.PI / 2; surface.position.y = .002; surface.receiveShadow = true; group.add(surface);
-  if (scene.id === 'stove') {
-    // A compact iron body with a stovepipe and an open, hinged door.
-    const shell = .16;
-    box(group, [shell, h + .2, d + .25], [-(w + shell) / 2, h / 2, 0], iron);
-    box(group, [shell, h + .2, d + .25], [(w + shell) / 2, h / 2, 0], iron);
-    box(group, [w, h, .15], [0, h / 2, -d / 2 - .075], firebrick);
-    box(group, [w + .48, .16, d + .5], [0, h + .08, 0], iron);
-    box(group, [w + .3, .17, .2], [0, .085, d / 2 + .08], iron);
-    box(group, [w + .3, .12, d + .25], [0, -.06, 0], iron);
-    for (const x of [-.58, .58]) for (const z of [-.4, .4]) box(group, [.14, .24, .14], [x, -.18, z], iron);
-    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(.18, .18, 3.2, 24), iron);
-    pipe.position.set(0, h + 1.75, -.17); pipe.castShadow = true; group.add(pipe);
-    for (const y of [h + .25, h + 1.4]) {
-      const collar = new THREE.Mesh(new THREE.CylinderGeometry(.2, .2, .065, 24), iron);
-      collar.position.set(0, y, -.17); group.add(collar);
-    }
-    const door = new THREE.Group(); door.position.set(-w / 2 - .08, 0, d / 2 + .12); door.rotation.y = -1.9; group.add(door);
-    for (const y of [.1, h - .06]) box(door, [w + .1, .12, .10], [w / 2, y, 0], iron);
-    for (const x of [0, w]) box(door, [.12, h - .04, .10], [x, h / 2, 0], iron);
-    box(door, [.1, .32, .13], [w - .15, h / 2, .13], material('#857967', .7));
-    box(group, [8, 6, .2], [0, 2.65, -1.5], material('#47403a'));
-  } else {
-    const grand = scene.id === 'grand', surround = grand ? .7 : .5;
-    box(group, [14, 8, .22], [0, 3.6, -d / 2 - .55], material(grand ? '#403a32' : '#726355'));
-    box(group, [w, h, .2], [0, h / 2, -d / 2 - .1], firebrick);
-    for (const side of [-1, 1]) {
-      masonry(group, [surround, h, d + .25], [side * (w + surround) / 2, h / 2, 0],
-        grand ? '#9c8971' : '#8e4e37', grand ? .62 : .40, grand ? .38 : .19, side + 41);
-      // Soot-dark reveals keep the opening distinct from the surround.
-      box(group, [.025, h, d], [side * (w / 2 + .012), h / 2, 0], firebrick);
-    }
-    masonry(group, [w + surround * 2, grand ? .85 : .7, d + .25], [0, h + (grand ? .425 : .35), 0],
-      grand ? '#9c8971' : '#8e4e37', grand ? .7 : .40, grand ? .28 : .19, 14);
-    const mantel = grand ? stone : material('#593722');
-    box(group, [w + surround * 2 + .45, .18, d + .7], [0, h + (grand ? .96 : .8), .04], mantel);
-    if (grand) {
-      for (const side of [-1, 1]) {
-        const x = side * (w / 2 + surround / 2);
-        box(group, [.54, h - .36, .14], [x, h / 2, d / 2 + .22], stone);
-        for (const y of [.15, h - .12]) box(group, [.73, .22, .3], [x, y, d / 2 + .2], stone);
-        for (const dx of [-.14, 0, .14]) box(group, [.035, h - .7, .035], [x + dx, h / 2, d / 2 + .31], material('#6c5e4e'));
-      }
-      box(group, [w + 1.95, .11, d + .9], [0, h + 1.11, .04], stone);
-    }
-    // A modest iron retainer marks the front of the legal pile.
-    box(group, [w, .065, .08], [0, .25, d / 2], iron);
-    for (let x = -w / 2 + .15; x < w / 2; x += .3) box(group, [.04, .30, .06], [x, .15, d / 2], iron);
+  const { width: w, height: h, depth: d } = scene.mouth, surround = .49;
+  const textures = createHearthTextures();
+  const stoneMat = material('#b0aaa1'); stoneMat.map = stoneMat.bumpMap = textures.stone; stoneMat.bumpScale = .017;
+  const brickMat = material('#ffffff'); brickMat.vertexColors = true;
+  brickMat.map = brickMat.bumpMap = textures.brick; brickMat.bumpScale = .010;
+  const firebrickMat = material('#ffffff'); firebrickMat.vertexColors = true;
+  firebrickMat.map = firebrickMat.bumpMap = textures.firebox; firebrickMat.bumpScale = .006;
+  // The room map already contains its subdued illumination and wall detail.
+  // Keep that bake legible without adding room lights or lighting this wall twice.
+  const wallMat = new THREE.MeshBasicMaterial({ color: '#aaa098', map: textures.wall });
+  const room = batch(group, 'Dark plaster room', wallMat, false);
+  const stone = batch(group, 'Raised hearth and lower landing', stoneMat);
+  const mortar = batch(group, 'Recessed masonry mortar', material('#24201a'));
+  const brick = batch(group, 'Terracotta brick surround', brickMat);
+  const firebrick = batch(group, 'Scorched firebox brick', firebrickMat);
+  const timber = batch(group, 'Aged timber mantel and skirting', material('#25180f'));
+  const iron = batch(group, 'Blackened iron fire guard', material('#111315', .65, .67));
+
+  const roomWallZ = -d / 2 - .40;
+  room.box([14, 8, .20], [0, 3.3, roomWallZ], { uv: (x, y) => [x / 14 + .5, (y + .7) / 8] });
+  room.finish();
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 16), material('#171410'));
+  floor.name = 'Room floor'; floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, -.71, 3); floor.receiveShadow = true; group.add(floor);
+
+  // The fire retains its established y=0 ground plane. Lowering the landing
+  // exposes a substantial raised plinth without offsetting fuel or particles.
+  stone.box([w + 2.05, .39, d + 1.48], [0, -.515, .38]); // landing from floor -.71 to -.32
+  stone.box([w + 1.20, .31, d + .56], [0, -.155, .10]); // seated on cap -.31; firebox top 0
+  stone.box([w + 2.14, .075, d + 1.57], [0, -.3475, .38]); // thin overhanging edge
+  stone.finish();
+  const surface = new THREE.Mesh(new THREE.PlaneGeometry(w, d), material('#211e19'));
+  surface.name = 'Firebox floor'; surface.rotation.x = -Math.PI / 2;
+  surface.position.y = .004; surface.receiveShadow = true; group.add(surface);
+
+  const front = d / 2 + .15, fullWidth = w + surround * 2;
+  for (const side of [-1, 1]) {
+    // Recess the backing beyond the reveal faces; an inner face on the
+    // legal mouth plane would hide the side bricks behind a flat wall.
+    mortar.box([surround - .095, h + .28, d + .38], [side * ((w + surround) / 2 + .0475), (h - .28) / 2, .02]);
+    brickCourses(brick, surround, h + .28, [side * (w + surround) / 2, (h - .28) / 2, front + .055], { seed: side + 41 });
   }
-  return { group, surface, colliders: mouthColliders(scene) };
+  // Three stout courses above the shorter opening give the surround weight.
+  const lintelHeight = .59;
+  mortar.box([fullWidth, lintelHeight, d + .38], [0, h + lintelHeight / 2, .02]);
+  brickCourses(brick, fullWidth, lintelHeight, [0, h + lintelHeight / 2, front + .055], { seed: 14, rowHeight: .19 });
+
+  // Brick faces sit outside all three legal mouth planes, leaving the exact
+  // existing collider and fuel space clear. UVs span the whole soot pattern.
+  const fireboxUV = (x, y) => [THREE.MathUtils.clamp(x / w + .5, 0, 1), THREE.MathUtils.clamp(y / h, 0, 1)];
+  mortar.box([w, h, .19], [0, h / 2, -d / 2 - .13]);
+  brickCourses(firebrick, w, h, [0, h / 2, -d / 2 - .045], { seed: 18, rowHeight: .178, brickWidth: .405, uv: fireboxUV });
+  for (const side of [-1, 1]) {
+    brickCourses(firebrick, d, h, [side * (w / 2 + .046), h / 2, 0], {
+      seed: side + 29, rowHeight: .178, brickWidth: .405, rotateY: side * Math.PI / 2,
+      uv: (_x, y, z) => [.5 + side * (.31 + .19 * (z / d + .5)), THREE.MathUtils.clamp(y / h, 0, 1)],
+    });
+  }
+  // Soot-black lintel underside masks the top of the box without another draw.
+  mortar.box([w, .045, d], [0, h + .023, 0]);
+  mortar.finish(); brick.finish(); firebrick.finish();
+
+  const mantelTop = h + lintelHeight + .19;
+  timber.box([fullWidth + .36, .19, d + .74], [0, mantelTop - .095, .06]);
+  timber.box([fullWidth + .22, .055, d + .59], [0, mantelTop - .215, .035]);
+  // Two restrained corbels and the room skirting share the timber draw.
+  for (const side of [-1, 1]) timber.box([.16, .20, .19], [side * (w / 2 + .28), mantelTop - .32, front + .03]);
+  timber.box([14, .12, .085], [0, -.63, roomWallZ + .14]);
+  timber.finish();
+
+  iron.box([w - .12, .052, .055], [0, .21, d / 2 - .035]);
+  for (let x = -w / 2 + .19; x < w / 2 - .08; x += .31) iron.box([.032, .24, .045], [x, .12, d / 2 - .035]);
+  iron.finish();
+  return {
+    group, surface, colliders: mouthColliders(scene),
+    textureRegistry: {
+      hearthWall: { map: textures.wall },
+      hearthBrick: { map: textures.brick, bump: textures.brick },
+      hearthFirebox: { map: textures.firebox, bump: textures.firebox },
+      hearthStone: { map: textures.stone, bump: textures.stone },
+    },
+  };
 }
 
 // GPU particles use world-space centres. Clip their generated positions too,
-// so sparks and steam cannot drift through the stove casing or into the room.
+// so sparks and steam cannot drift through the brick surround or into the room.
 export function containParticles(layers, mouth) {
   const { width, height, depth } = mouth, seen = new Set();
   for (const layer of [layers.sparks, layers.steam]) layer.traverse(object => {

@@ -12,6 +12,9 @@
 //   exposedWood: map, normal | bump               scraped patches and peeled-strip undersides; tiles along v
 //   soil:        map, normal | bump               the clearing floor; tiles 8x over 22 m, must be seamless
 //   smokePuff:   map                              greyscale alpha sprite for log-end steam
+// Optional Home slots are ready in the loader, but list only delivered files:
+//   hearthWall, hearthBrick, hearthFirebox, hearthStone: map, normal | bump
+// See planning/hearth-texture-pass.md and its companion JSON manifest.
 export const TEXTURE_MANIFEST = Object.freeze({
   bark: {
     map: 'textures/bark-albedo.webp',

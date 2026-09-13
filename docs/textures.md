@@ -22,10 +22,14 @@ decoded. Sources and the OpenGL normal bake live in `planning/`.
   If a tool offers DirectX/OpenGL, choose OpenGL, otherwise invert green.
 - **Tiling is per slot** (below). Where a texture must tile, test it by
   offsetting it by half its size in both axes and checking for seams.
-- **No baked lighting.** The fire is the only light and it moves; any painted
+- **No baked lighting on fuel or outdoor surface tiles.** The fire moves; any painted
   highlight or shadow will look wrong half the time. Albedo should be flat,
   diffuse colour only. Ambient-occlusion style darkening inside deep bark
-  cracks is acceptable because it reads as cavity, not light.
+  cracks is acceptable because it reads as cavity, not light. The Home room
+  intentionally uses baked dim corners, architectural occlusion and wall
+  detail; its specific exception and placement maps are documented in
+  `planning/hearth-texture-pass.md`. Keep moving orange firelight out of these
+  bakes. The firebox soot is permanent surface discoloration.
 - **Real-world scale**: a log in the scene is about 0.5 m in diameter and
   2.9 m long; the stone ring is about 4.2 m across; the soil texture repeats
   every 2.75 m. Detail frequency should match those sizes at 2048 px.
@@ -102,8 +106,9 @@ tint and opacity come from the shader.
 
 ## Slots that stay procedural on purpose
 
-- **Stones**: shaded in the fragment shader from world position (mineral
-  variation, quartz flecks, soot facing the fire). A stone albedo would need
+- **Stones**: broad mineral variation, dirt, ash and inward soot are baked
+  into vertex colors once; one fragment noise sample supplies fine grain.
+  A stone albedo would need
   per-stone UVs that do not exist. If authored stones are wanted later, the
   path is a triplanar map in `src/rocks.js`.
 - **Coals, char plates, ash**: all shader-driven from thermal state; texture
@@ -111,6 +116,12 @@ tint and opacity come from the shader.
 - **Flames, smoke, embers**: volumetric and particle shaders; no textures.
 
 ## Workflow
+
+The optional Home texture slots (`hearthWall`, `hearthBrick`,
+`hearthFirebox`, `hearthStone`) are wired into the same loader but intentionally
+absent from the shipped-file manifest until authored files exist. Their small
+procedural bakes provide the complete room in the meantime. Follow
+`planning/hearth-texture-pass.md` for dimensions, orientation and appearance.
 
 1. Put files under `public/textures/`.
 2. List them in `src/texture-manifest.js`:

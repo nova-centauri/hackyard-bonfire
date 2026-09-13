@@ -115,7 +115,16 @@ for (const scene of FIRE_SCENES.filter(scene => scene.mouth)) {
   });
 }
 
-test('unknown scene identifiers fall back to the original pit', () => {
-  assert.equal(getFireScene('missing').id, 'pit');
-  assert.equal(createSceneCycle('missing').logs.length, 7);
+test('only outdoor pit and home fireplace are available, with outdoor pit as the default', () => {
+  assert.deepEqual(FIRE_SCENES.map(scene => scene.id), ['pit', 'home']);
+  assert.equal(getFireScene().id, 'pit');
+  assert.equal(JSON.stringify(createSceneCycle()), JSON.stringify(new BurnCycle(8108)));
+});
+
+test('removed and unknown scene identifiers fall back to the original pit', () => {
+  for (const id of ['grand', 'stove', 'missing']) {
+    assert.equal(getFireScene(id).id, 'pit');
+    assert.equal(JSON.stringify(createSceneCycle(id, 22)), JSON.stringify(new BurnCycle(22)));
+    assert.deepEqual(sceneLogDefinitions(id), sceneLogDefinitions('pit'));
+  }
 });

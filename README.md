@@ -15,8 +15,8 @@ that; **Focus mode** in the header returns to it. Turn on **Sound** once and
 it comes back on the next visit with your first click.
 
 The **Scene** picker stays at the top left, including in focus mode. Choose
-the original outdoor pit, a home brick fireplace, a grand stone fireplace,
-or a small wood stove. Switching always starts a new fire, including when
+the outdoor pit (the default) or a home brick fireplace.
+Switching always starts a new fire, including when
 returning to a scene: fuel, queue, coals, ash and the settled pile are discarded.
 Pause, burn speed, sound and automatic tending keep their current settings.
 
@@ -24,8 +24,13 @@ Pause, burn speed, sound and automatic tending keep their current settings.
 | --- | ---: | --- |
 | Outdoor pit | 7 | All existing fuel types and sizes |
 | Home fireplace | 5 | Shorter cuts; no stumps |
-| Grand fireplace | 6 | Larger cuts; no stumps |
-| Wood stove | 3 | Small logs and kindling only |
+
+The pit has a partly buried ring of 21 irregular stones with dirt, ash and
+scorched inner faces. The Home fireplace has a raised firebox above the landing,
+a lower opening, soot-dark brick lining and a dim plaster room lit by the fire.
+Room detail and static weathering are baked at scene construction; the static
+hearth is batched to keep draw calls low. An optional authored texture pass is
+specified in [planning/hearth-texture-pass.md](planning/hearth-texture-pass.md).
 
 Indoor cuts are limited in length and thickness, with a low initial stack.
 The same limits apply to the queue, manual additions, random fuel and automatic

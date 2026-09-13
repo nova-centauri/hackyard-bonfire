@@ -9,6 +9,10 @@ export const SLOT_ROLES = Object.freeze({
   endGrain: { map: 'map', bump: 'bumpMap', normal: 'normalMap', emissive: 'emissiveMap' },
   exposedWood: { map: 'map', bump: 'bumpMap', normal: 'normalMap' },
   soil: { map: 'map', bump: 'bumpMap', normal: 'normalMap' },
+  hearthWall: { map: 'map', bump: 'bumpMap', normal: 'normalMap' },
+  hearthBrick: { map: 'map', bump: 'bumpMap', normal: 'normalMap' },
+  hearthFirebox: { map: 'map', bump: 'bumpMap', normal: 'normalMap' },
+  hearthStone: { map: 'map', bump: 'bumpMap', normal: 'normalMap' },
   smokePuff: { map: 'map' },
 });
 // Which material slots each role may replace. The procedural textures double
@@ -60,10 +64,19 @@ export function collectMaterials(roots) {
 // registry: { slotName: { map: proceduralTexture, bump: proceduralTexture, emissive: proceduralTexture } }
 // Returns a promise of { slot: { role: 'applied' | 'failed' } } once every listed file has settled.
 export function loadAuthoredTextures(manifest, registry, materialsProvider, { base = '/', loader = new THREE.TextureLoader() } = {}) {
-  const jobs = [];
+  const jobs = [], authored = new Set();
+  // Original procedural textures stay owned by the study. A decoded bump that
+  // a normal supersedes can be released immediately once no handle uses it.
+  const releaseReplaced = (texture, materials) => {
+    if (!authored.has(texture)) return;
+    if (Object.values(registry).some(handles => Object.values(handles).includes(texture))) return;
+    if (materials.some(material => Object.values(material).includes(texture) || Object.values(material.uniforms || {}).some(uniform => uniform?.value === texture))) return;
+    texture.dispose(); authored.delete(texture);
+  };
   for (const [slot, files] of Object.entries(manifest || {})) {
     const roles = SLOT_ROLES[slot], handles = registry[slot];
     if (!roles || !handles) continue;
+    let normalApplied = false;
     for (const [role, url] of Object.entries(files || {})) {
       if (!(role in roles) || typeof url !== 'string') continue;
       if (!(role === 'normal' ? handles.bump : handles[role])) continue;
@@ -74,13 +87,19 @@ export function loadAuthoredTextures(manifest, registry, materialsProvider, { ba
           // normal captured against the procedural texture at schedule time
           // would no longer find a material to swap.
           const previous = role === 'normal' ? handles.bump : handles[role];
-          if (!previous) return resolve({ slot, role, status: 'unused' });
+          if (!previous || (role === 'bump' && normalApplied)) {
+            texture.dispose();
+            return resolve({ slot, role, status: 'unused' });
+          }
           configureAuthoredTexture(texture, role, previous);
-          const count = swapTexture(materialsProvider(), previous, texture, { role });
-          // Keep every handle that pointed at the old texture pointing at the new
-          // one, so a bump or normal map loaded later finds the current slot.
-          for (const key of Object.keys(handles)) if (handles[key] === previous && (role !== 'normal' || key === 'bump')) handles[key] = texture;
+          authored.add(texture);
+          const materials = materialsProvider(), count = swapTexture(materials, previous, texture, { role });
+          // Only albedo carries a shared procedural bump along with it. A bump
+          // must never retarget the map handle, regardless of decode order.
+          if (role === 'map' && handles.bump === previous) handles.bump = texture;
           if (role === 'normal') handles.bump = texture; else handles[role] = texture;
+          if (role === 'normal') normalApplied = true;
+          releaseReplaced(previous, materials);
           resolve({ slot, role, status: count ? 'applied' : 'unused', materials: count });
         }, undefined, () => resolve({ slot, role, status: 'failed' }));
       }));

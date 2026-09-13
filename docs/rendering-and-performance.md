@@ -146,6 +146,27 @@ advance on every fixed step. No timing gain is claimed for this cache.
 
 ## Measuring
 
+The September scene refinement reduces the outdoor ring from 23 stones /
+16,560 triangles to 21 stones / 6,720 triangles (59% fewer), still in one
+draw. Broad mineral variation, dirt, soot and ash are computed into vertex
+colors at construction; the fragment shader retains one fine-grain noise
+sample instead of three. Collision hulls use the final buried geometry.
+
+The Home set uses nine static mesh draws instead of 24, batching its brick
+courses, mortar, stonework, timber and iron. Real brick lining raises static
+set triangles from 1,298 to 3,184, while shadow-casting meshes fall from 22
+to six. Its four small texture bakes total 2 MiB before
+mipmaps and are uploaded once per scene construction. The room wall uses
+baked shading; the hearth receives dynamic firelight. No additional lights
+or soot decal passes are required. Indoor construction skips the unused
+outdoor floor, dirt, 310 debris instances and empty twig buffers. These are
+geometry and draw-cost reductions, not claimed frame-rate measurements.
+
+`data-triangles`, `data-gpu-geometries`, and `data-gpu-textures` on `.stage`
+supplement the existing draw/shader diagnostics for scene-switch checks.
+Geometry counts depend on current fuel types and char fragments; compare
+equivalent states rather than expecting a constant count during a fire.
+
 - `npm test` runs the pure-logic suite in about ten seconds; the settling
   cost test fails if the pile stops sleeping.
 - The physics micro-benchmark used during this work lives in the session
