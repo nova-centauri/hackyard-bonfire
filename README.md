@@ -169,7 +169,9 @@ the work log.
 ## Code map
 
 - `src/main.js` page shell, navigation, sound controls, remembered
-  preferences (`src/preferences.js`). Footer GitHub link and commit log
+  preferences (`src/preferences.js`). Quiet lifetime fire counts
+  (`src/fire-stats.js`) sit in a collapsed footer log and persist on the
+  same preferences record. Footer GitHub link and commit log
   (`src/github-log.js`); prompts backfill in `public/github-log.json`.
 - `src/scene.js` the viewer: renderer, composer, quality application, frame
   loop, scene construction. `src/quality.js` tiers and governor.
@@ -191,8 +193,8 @@ the work log.
 
 Tests live in `test/` as `node:test` files and cover the burn model, surface
 combustion, settling (including idle cost and sleeping), rocks, twigs, geometry,
-the quality governor, wind and pops, GPU layers, audio, preferences, the
-texture loader and the GitHub commit log.
+the quality governor, wind and pops, GPU layers, audio, preferences, fire
+stats, the texture loader and the GitHub commit log.
 
 ## Deploy
 

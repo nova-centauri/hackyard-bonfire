@@ -36,7 +36,13 @@ export class BurnCycle {
     const starterTypes = ['log', 'log', 'small-log', 'kindling'];
     this.logs = Array.from({ length: 7 }, (_, slot) => this.makeLog(slot, slot < initialCount, starterTypes[slot]));
     this.record('A new fire', `${initialCount} pieces on the bed · ${7 - initialCount} pieces waiting`);
+    this.markOpeningFuel();
     this.updateSummary();
+  }
+  // Observational only: lifetime stats read these. They never feed back into heat.
+  markOpeningFuel() {
+    this.feedCount = 0; this.tendedCount = 0;
+    this.piecesPlaced = this.logs.filter(l => l.phase !== 'queued').length;
   }
   randomFuelType() {
     // A separate random stream preserves seeded moisture, placement, and timing.
@@ -99,6 +105,7 @@ export class BurnCycle {
     }
     if (fuelType !== undefined) log.fuelType = fuelType;
     log.phase = 'fresh'; log.addedAt = this.time; log.tended = tended;
+    this.feedCount++; this.piecesPlaced++; if (tended) this.tendedCount++;
     this.record(`${getFuelType(log.fuelType).label} ${String(log.id).padStart(2, '0')} added`, tended ? 'The fire was running low; a fresh piece keeps it going' : 'Fresh wood settles onto the bed');
     // A fast-burning piece needs a follow-up sooner to keep the stack alight.
     this.nextFeed = this.time + this.feedInterval / Math.max(1, getFuelType(log.fuelType).burnRate);

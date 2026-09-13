@@ -38,7 +38,8 @@ Done in this pass:
 - Wind with gusts, wood pops synchronized across sparks, light and sound,
   1/f firelight flicker with a moving light, heat-haze refraction, vignette.
 - The fire is kept tended by default so it survives a long session; focus
-  mode, sound and volume are remembered.
+  mode, sound, volume, auto-feed and quiet lifetime fire counts (fires started,
+  fuel placed, burn-clock time, times tended, pops) are remembered.
 - Texture pipeline groundwork: manifest, loader, authoring brief
   (`docs/textures.md`); procedural bark generation no longer allocates nine
   million strings at startup.
@@ -114,6 +115,12 @@ soil. This remains an ambient campfire, with no new controls or activities.
 
 ## Work log
 
+- 2026-09-13 — Quiet lifetime fire counts in a collapsed footer log: fires
+  started (a new burn cycle on load, Randomize, or changing place), fuel
+  pieces placed on the bed, accumulated burn-clock time across visits, times
+  auto-tended, and pops. Stored on the existing preferences record. Tests cover
+  persist and accumulate across a simulated reload; the two clocks stay
+  decoupled.
 - 2026-09-13 — Graphical pass on the indoor places: cottage brick and carved
   stone fireplaces with timber/stone mantels, andirons, tools and cordwood;
   the wood stove shrunk to a four-legged cast-iron body in a cream-brick
