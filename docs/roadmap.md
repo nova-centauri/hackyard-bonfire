@@ -115,12 +115,13 @@ soil. This remains an ambient campfire, with no new controls or activities.
 
 ## Work log
 
-- 2026-09-13 — Quiet lifetime fire counts in a collapsed footer log: fires
-  started (a new burn cycle on load, Randomize, or changing place), fuel
-  pieces placed on the bed, accumulated burn-clock time across visits, times
-  auto-tended, and pops. Stored on the existing preferences record. Tests cover
-  persist and accumulate across a simulated reload; the two clocks stay
-  decoupled.
+- 2026-09-13 — Quiet fire counts in a collapsed footer log, Here and Everyone.
+  This browser: fires started, fuel placed, burn-clock time, times tended,
+  pops; stored on the preferences record. Everyone: fires served, fuel, and
+  burn time in whole minutes. The live host has no stats API (static `dist/`,
+  `/api/stats` is the SPA). Abacus holds the public tally until a same-origin
+  JSON endpoint exists. Tests cover persist across a simulated reload; the two
+  clocks stay decoupled.
 - 2026-09-13 — Graphical pass on the indoor places: cottage brick and carved
   stone fireplaces with timber/stone mantels, andirons, tools and cordwood;
   the wood stove shrunk to a four-legged cast-iron body in a cream-brick

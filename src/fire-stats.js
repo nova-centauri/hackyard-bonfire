@@ -1,6 +1,6 @@
-// Quiet lifetime counts for the fire, kept on the same preferences record so
-// they survive a refresh. One-way: stats observe the burn cycle and pop
-// serial; they never write back into heat, feed, or animation state.
+// Quiet lifetime counts for the fire. Local totals live on the preferences
+// record so they survive a refresh. Site-wide totals are a separate public
+// tally (`src/global-stats.js`); this module never writes the burn clock.
 //
 // Meanings:
 //   fires        — burn cycles started. Matches the lifecycle's "A new fire":
@@ -18,12 +18,13 @@
 import { loadPreferences, savePreferences, sanitizeStats } from './preferences.js';
 
 const pad = n => String(n).padStart(2, '0');
+const ZERO_DELTA = Object.freeze({ fires: 0, pieces: 0, burnSeconds: 0, tended: 0, pops: 0 });
 const STATS_ROWS = Object.freeze([
-  ['fires', 'Fires', 'Burn cycles started: a new fire on load, Randomize, or changing place'],
-  ['pieces', 'Fuel', 'Pieces placed on the bed, including the opening stack'],
-  ['burnSeconds', 'Burned', 'Burn-clock time, accumulated across visits'],
-  ['tended', 'Tended', 'Times a fresh piece was added because the fire ran low'],
-  ['pops', 'Pops', 'Cracks and pops from the wood'],
+  ['fires', 'Fires', 'Burn cycles started: a new fire on load, Randomize, or changing place', 'Fires started by everyone'],
+  ['pieces', 'Fuel', 'Pieces placed on the bed in this browser, including the opening stack', 'Pieces placed on every fire'],
+  ['burnSeconds', 'Burned', 'Burn-clock time in this browser, accumulated across visits', 'Burn-clock time across every fire, in whole minutes'],
+  ['tended', 'Tended', 'Times a fresh piece was added because the fire ran low', 'Kept in this browser'],
+  ['pops', 'Pops', 'Cracks and pops from the wood', 'Kept in this browser'],
 ]);
 
 export function formatDuration(seconds) {
@@ -33,6 +34,11 @@ export function formatDuration(seconds) {
   if (d) return `${d}d ${pad(h % 24)}:${pad(m)}:${pad(s)}`;
   if (h) return `${h}:${pad(m)}:${pad(s)}`;
   return `${pad(m)}:${pad(s)}`;
+}
+
+export function formatStat(value, { time = false } = {}) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  return time ? formatDuration(value) : String(Math.max(0, Math.floor(Number(value))));
 }
 
 export function cycleIdentity(cycle) {
@@ -73,7 +79,8 @@ export function createFireStats({ storage = globalThis.localStorage, persistBurn
     snapshot() { return { ...totals }; },
     flush: persist,
     observeCycle(cycle) {
-      if (!cycle) return;
+      const before = { ...totals };
+      if (!cycle) return { ...ZERO_DELTA };
       if (!sameFire(session, cycle)) {
         totals.fires++;
         totals.pieces += placed(cycle);
@@ -85,7 +92,10 @@ export function createFireStats({ storage = globalThis.localStorage, persistBurn
         session.lastPieces = placed(cycle);
         session.lastTended = tended(cycle);
         maybePersist(true);
-        return;
+        return {
+          fires: totals.fires - before.fires, pieces: totals.pieces - before.pieces,
+          burnSeconds: totals.burnSeconds - before.burnSeconds, tended: totals.tended - before.tended, pops: 0,
+        };
       }
       const nextPieces = placed(cycle), nextTended = tended(cycle);
       const addedPieces = nextPieces - session.lastPieces;
@@ -96,9 +106,14 @@ export function createFireStats({ storage = globalThis.localStorage, persistBurn
       if (addedPieces > 0) { totals.pieces += addedPieces; session.lastPieces = nextPieces; discrete = true; }
       if (addedTended > 0) { totals.tended += addedTended; session.lastTended = nextTended; discrete = true; }
       maybePersist(discrete);
+      return {
+        fires: 0, pieces: Math.max(0, addedPieces),
+        burnSeconds: totals.burnSeconds - before.burnSeconds, tended: Math.max(0, addedTended), pops: 0,
+      };
     },
     observePops(popState) {
-      if (!popState) return;
+      const before = totals.pops;
+      if (!popState) return { ...ZERO_DELTA };
       const serial = Number.isFinite(popState.serial) ? Math.max(0, popState.serial) : 0;
       if (session.popState !== popState) {
         session.popState = popState;
@@ -109,27 +124,37 @@ export function createFireStats({ storage = globalThis.localStorage, persistBurn
         session.lastPops = serial;
         maybePersist(true);
       }
+      return { ...ZERO_DELTA, pops: totals.pops - before };
     },
   };
 }
 
-export function renderFireStats(stats) {
-  const values = sanitizeStats(stats);
-  return STATS_ROWS.map(([key, label, title]) => {
-    const value = key === 'burnSeconds' ? formatDuration(values[key]) : String(values[key]);
-    return `<li title="${title}"><span>${label}</span><strong>${value}</strong></li>`;
+export function renderFireStats(local, global = {}) {
+  const here = sanitizeStats(local);
+  const everyone = global && typeof global === 'object' ? global : {};
+  const head = '<li class="fire-stats-head"><span></span><span>Here</span><span>Everyone</span></li>';
+  const rows = STATS_ROWS.map(([key, label, hereTitle, everyoneTitle]) => {
+    const time = key === 'burnSeconds';
+    const share = key === 'tended' || key === 'pops' ? null : everyone[key];
+    return `<li><span>${label}</span><strong title="${hereTitle}">${formatStat(here[key], { time })}</strong><strong title="${everyoneTitle}">${formatStat(share, { time })}</strong></li>`;
   }).join('');
+  return head + rows;
 }
 
-export function paintFireStats(root, stats) {
+export function paintFireStats(root, local, global = {}) {
   if (!root) return;
-  const values = sanitizeStats(stats);
+  const here = sanitizeStats(local);
+  const everyone = global && typeof global === 'object' ? global : {};
   const list = root.querySelector('#fire-stats-list') || root;
-  const html = renderFireStats(values);
+  const html = renderFireStats(here, everyone);
   if (list.innerHTML !== html) list.innerHTML = html;
-  root.dataset.fires = values.fires;
-  root.dataset.pieces = values.pieces;
-  root.dataset.burnSeconds = values.burnSeconds;
-  root.dataset.tended = values.tended;
-  root.dataset.pops = values.pops;
+  root.dataset.fires = here.fires;
+  root.dataset.pieces = here.pieces;
+  root.dataset.burnSeconds = here.burnSeconds;
+  root.dataset.tended = here.tended;
+  root.dataset.pops = here.pops;
+  root.dataset.globalFires = everyone.fires == null ? '' : everyone.fires;
+  root.dataset.globalPieces = everyone.pieces == null ? '' : everyone.pieces;
+  root.dataset.globalBurnSeconds = everyone.burnSeconds == null ? '' : everyone.burnSeconds;
+  root.dataset.globalSource = everyone.source || '';
 }

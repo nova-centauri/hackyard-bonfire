@@ -10,6 +10,7 @@ import { isTier } from './quality.js';
 import { loadPreferences, savePreferences } from './preferences.js';
 import { GITHUB_REPO, mountGithubLog } from './github-log.js';
 import { createFireStats, paintFireStats } from './fire-stats.js';
+import { createGlobalStats } from './global-stats.js';
 
 const flameIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2c1 6-6 7-5 12 1-2 3-3 4-5 0 3 5 5 5 8a5 5 0 0 1-10 0c-2-6 4-9 6-15Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
 const resetIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10a8 8 0 1 1 .8 6M4 4v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -32,22 +33,26 @@ document.querySelector('#app').innerHTML=`
   <div class="collection-bar"><div role="group" aria-label="Study collection"><button data-collection="refinements" class="selected" aria-pressed="true">Animated studies <span>07—08</span></button><button data-collection="originals" aria-pressed="false">Original studies <span>01—05</span></button></div><span class="collection-note">Ink & Wash foundation · Cinematic atmosphere</span></div>
   <nav class="study-nav" aria-label="Rendering styles"></nav>
  </main>
- <footer><span class="footer-tag">FLAME, WOOD & EVERYTHING BETWEEN</span><div class="footer-presence"><details id="fire-stats" class="footer-log"><summary title="Lifetime counts for this browser">Fires</summary><ul id="fire-stats-list" class="fire-stats-list" aria-label="Lifetime fire counts"></ul></details><div class="github-presence"><a class="github-link" href="${GITHUB_REPO.url}" rel="noopener noreferrer" aria-label="Hackyard Bonfire on GitHub">GitHub</a><details id="github-log"><summary>Commit log</summary><ol id="github-commits" class="github-commits"><li class="github-status">Loading…</li></ol></details></div></div><span class="footer-credit">Three.js <span class="footer-dot">·</span> 360° studies</span></footer>
+ <footer><span class="footer-tag">FLAME, WOOD & EVERYTHING BETWEEN</span><div class="footer-presence"><details id="fire-stats" class="footer-log"><summary title="Here and everyone">Fires</summary><ul id="fire-stats-list" class="fire-stats-list" aria-label="Fire counts for this browser and everyone"></ul></details><div class="github-presence"><a class="github-link" href="${GITHUB_REPO.url}" rel="noopener noreferrer" aria-label="Hackyard Bonfire on GitHub">GitHub</a><details id="github-log"><summary>Commit log</summary><ol id="github-commits" class="github-commits"><li class="github-status">Loading…</li></ol></details></div></div><span class="footer-credit">Three.js <span class="footer-dot">·</span> 360° studies</span></footer>
  <div id="focus-controls" class="focus-controls" role="group" aria-label="Focus mode controls" hidden><button id="add-fuel-focus" class="restore-menus" aria-label="Add a random piece of fuel" title="Add a random piece of fuel">${addFuelIcon}</button><button id="restore-menus" class="restore-menus" aria-label="Exit focus mode and show menus" title="Show menus (Esc)">${gearIcon}</button></div>`;
 
 function collectFireStats(){
- fireStats.observeCycle(viewer?.current?.cycle);
+ const delta=fireStats.observeCycle(viewer?.current?.cycle);
  fireStats.observePops(viewer?.current?.burnVisuals?.pops);
- paintFireStats(document.querySelector('#fire-stats'),fireStats.snapshot());
+ if(delta && (delta.fires || delta.pieces || delta.burnSeconds)) globalStats.ingest(delta);
+ paintFireStats(document.querySelector('#fire-stats'),fireStats.snapshot(),globalStats.snapshot());
 }
-function persistFireStats(){
+async function persistFireStats(){
  collectFireStats();
  fireStats.flush();
+ await globalStats.flush();
 }
 let viewer,current;
 const preferences=loadPreferences();
 const fireStats=createFireStats();
-paintFireStats(document.querySelector('#fire-stats'),fireStats.snapshot());
+const globalStats=createGlobalStats({onChange:everyone=>paintFireStats(document.querySelector('#fire-stats'),fireStats.snapshot(),everyone)});
+paintFireStats(document.querySelector('#fire-stats'),fireStats.snapshot(),globalStats.snapshot());
+globalStats.refresh().then(()=>paintFireStats(document.querySelector('#fire-stats'),fireStats.snapshot(),globalStats.snapshot()));
 let awaitingSoundGesture=preferences.sound;
 let selectedCollection='refinements';
 const collectionMemory={refinements:'wild-draft',originals:'cinematic'};
@@ -180,7 +185,7 @@ try{
  };
  loadStudy(resolveStudy());
  mountFocusMode(viewer,{initial:preferences.focus,onChange:active=>savePreferences({focus:active})});
- window.bonfire={viewer,studies,fireScenes:FIRE_SCENES,get current(){return current.id;},get stats(){return fireStats.snapshot();}};
+ window.bonfire={viewer,studies,fireScenes:FIRE_SCENES,get current(){return current.id;},get stats(){return {here:fireStats.snapshot(),everyone:globalStats.snapshot()};}};
 }catch(error){
  console.error(error);document.querySelector('#loading').innerHTML='This study needs WebGL 2. Please open it in a browser with hardware acceleration enabled.';
 }

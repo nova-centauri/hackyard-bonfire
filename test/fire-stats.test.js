@@ -38,7 +38,8 @@ test('a fire is a burn cycle start, fuel is pieces placed on the bed, and burn t
   const opening = cycle.piecesPlaced;
   assert.equal(opening, cycle.logs.filter(log => log.phase !== 'queued').length);
   assert.equal(cycle.feedCount, 0);
-  stats.observeCycle(cycle);
+  const started = stats.observeCycle(cycle);
+  assert.equal(started.fires, 1); assert.equal(started.pieces, opening);
   assert.deepEqual(stats.snapshot(), { fires: 1, pieces: opening, burnSeconds: 0, tended: 0, pops: 0 });
   cycle.advance(40);
   stats.observeCycle(cycle);
@@ -126,11 +127,15 @@ test('formatDuration is a quiet clock, not a dashboard', () => {
   assert.equal(formatDuration(65), '01:05');
   assert.equal(formatDuration(3600), '1:00:00');
   assert.equal(formatDuration(90061), '1d 01:01:01');
-  const html = renderFireStats({ fires: 2, pieces: 11, burnSeconds: 65, tended: 4, pops: 8 });
+  const html = renderFireStats({ fires: 2, pieces: 11, burnSeconds: 65, tended: 4, pops: 8 }, { fires: 40, pieces: 90, burnSeconds: 120 });
+  assert.match(html, /Here/);
+  assert.match(html, /Everyone/);
   assert.match(html, /Fires/);
   assert.match(html, />2</);
+  assert.match(html, />40</);
   assert.match(html, /01:05/);
-  assert.match(html, /Burn-clock time/);
+  assert.match(html, /Burn-clock time in this browser/);
+  assert.match(html, /—/);
 });
 
 test('a hearth fire counts the mouth bed, not the pit’s seven slots', () => {
