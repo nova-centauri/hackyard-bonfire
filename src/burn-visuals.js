@@ -117,6 +117,7 @@ export function updateBurnVisuals(study, force = false) {
     view.resetToken = resetToken; view.seed = cycle.seed; view.particles.length = 0; view.embers.length = 0;
     view.impactEvents.length = 0; view.impactPulse = 0; view.lastShed = cycle.logs.map(log => log.shed);
     view.settling = createLogSettling(study.logDefs, cycle.seed, study.logMeshes.map(mesh => mesh.geometry?.userData.profile), study.rockColliders || []);
+    view.settling.arrivalLift = study.arrivalLift ?? .92;
     view.logTransforms.length = 0; view.logDepthTransforms.length = 0; view.coalScale = null;
     view.fragmentTransforms.length = 0; view.fragmentDepthTransforms.length = 0;
     opaqueChanged = true;

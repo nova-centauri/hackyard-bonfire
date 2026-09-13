@@ -1,5 +1,6 @@
 import { PHASE_LABELS, SPEEDS } from './lifecycle.js';
 import { FUEL_TYPES, getFuelType } from './fuel-types.js';
+import { getFireScene } from './fire-scenes.js';
 
 export function formatTime(seconds) {
   const total = Math.max(0, Math.floor(seconds)), h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60;
@@ -35,7 +36,7 @@ export function mountBurnPanel(viewer, { onAutoFeed } = {}) {
     </section>`);
   document.querySelector('#burn-actions').prepend(document.querySelector('#motion-toggle'));
   const panel = document.querySelector('.burn-panel'), cards = [...document.querySelectorAll('.fuel-card')];
-  let lastUpdate = 0, lastRevision = -1, lastSeed = null;
+  let lastUpdate = 0, lastRevision = -1, lastSeed = null, lastScene = null;
   document.querySelector('#burn-speed').addEventListener('change', e => viewer.setSpeed(Number(e.target.value)));
   document.querySelector('#randomize-fire').addEventListener('click', () => viewer.resetFire());
   document.querySelector('#add-log').addEventListener('click', () => viewer.addLog(document.querySelector('#fuel-type').value || undefined));
@@ -52,6 +53,14 @@ export function mountBurnPanel(viewer, { onAutoFeed } = {}) {
     panel.hidden = !cycle; document.body.dataset.lifecycle = String(!!cycle);
     if (!cycle || (!force && performance.now() - lastUpdate < 220)) return;
     lastUpdate = performance.now();
+    const scene = getFireScene(viewer.sceneId);
+    if (lastScene !== scene.id) {
+      const select = document.querySelector('#fuel-type'), selected = select.value;
+      select.innerHTML = `<option value="">Next waiting piece</option>${scene.fuelTypes.map(id => `<option value="${id}">${FUEL_TYPES[id].label}${scene.id === 'home' && FUEL_TYPES[id].lengthScale >= .8 ? ' · short cut' : ''}</option>`).join('')}`;
+      select.value = scene.fuelTypes.includes(selected) ? selected : '';
+      lastScene = scene.id; lastRevision = -1;
+    }
+    panel.style.setProperty('--fuel-slot-count', cycle.logs.length);
     panel.dataset.seed = cycle.seed; panel.dataset.burnTime = cycle.time; panel.dataset.phase = cycle.phase;
     panel.dataset.flame = cycle.flame.toFixed(3); panel.dataset.coalHeat = cycle.coalHeat.toFixed(4); panel.dataset.fuel = cycle.fuel.toFixed(4);
     const phase = document.querySelector('#burn-phase'); if (phase.textContent !== cycle.phase) phase.textContent = cycle.phase;
@@ -76,7 +85,7 @@ export function mountBurnPanel(viewer, { onAutoFeed } = {}) {
     document.querySelector('#auto-feed').checked = cycle.autoFeed;
     document.querySelector('#add-log').disabled = !cycle.canAdd;
     const selectedFuel = document.querySelector('#fuel-type').value;
-    document.querySelector('#add-log').title = cycle.canAdd ? selectedFuel ? `Add ${getFuelType(selectedFuel).label.toLowerCase()} to the fire bed` : 'Add the next waiting piece, or a fresh piece if the queue is empty' : 'All seven positions are occupied; wait for a piece to become ash';
+    document.querySelector('#add-log').title = cycle.canAdd ? selectedFuel ? `Add ${getFuelType(selectedFuel).label.toLowerCase()} to the fire bed` : 'Add the next waiting piece, or a fresh piece if the queue is empty' : `All ${scene.maxPieces} positions are occupied; wait for a piece to become ash`;
     const focusAdd = document.querySelector('#add-fuel-focus');
     if (focusAdd) {
       focusAdd.disabled = !cycle.canAdd;
@@ -88,6 +97,8 @@ export function mountBurnPanel(viewer, { onAutoFeed } = {}) {
     document.querySelector('#burn-seed').textContent = `START ${cycle.seed.toString(16).toUpperCase().padStart(8, '0')}`;
     let queuedDelay = 0;
     cards.forEach((card, i) => {
+      card.hidden = !cycle.logs[i];
+      if (card.hidden) return;
       const log = cycle.logs[i], fuelType = getFuelType(log.fuelType); card.dataset.phase = log.phase; card.dataset.fuelType = log.fuelType ?? 'log';
       card.querySelector('.fuel-name').textContent = `${fuelType.label.toUpperCase()} ${String(log.id).padStart(2, '0')}`;
       card.querySelector('.fuel-phase').textContent = PHASE_LABELS[log.phase];

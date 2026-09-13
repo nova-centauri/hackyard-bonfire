@@ -64,7 +64,7 @@ function layout(seed) {
   return pieces;
 }
 
-export function createCoalBed({seed=42,mode=0,animated=false,groundHeight=()=>0}={}) {
+export function createCoalBed({seed=42,mode=0,animated=false,groundHeight=()=>0,footprint=[1,1]}={}) {
   const geometry=createCoalGeometry(seed),material=createCoalMaterial(mode,animated,{localized:true});
   const pieces=layout(seed),heat=new THREE.InstancedBufferAttribute(new Float32Array(COUNT),1).setUsage(THREE.DynamicDrawUsage);
   const phase=new THREE.InstancedBufferAttribute(new Float32Array(pieces.map(piece=>piece.phase)),1);
@@ -72,6 +72,7 @@ export function createCoalBed({seed=42,mode=0,animated=false,groundHeight=()=>0}
   const coals=new THREE.InstancedMesh(geometry,material,COUNT),object=new THREE.Object3D(),vertex=new THREE.Vector3();
   for(let i=0;i<COUNT;i++){
     const piece=pieces[i];
+    piece.x*=footprint[0];piece.z*=footprint[1];piece.radius*=Math.min(...footprint);
     object.position.set(piece.x,0,piece.z);object.rotation.set(piece.rotationX,piece.rotationY,piece.rotationZ);
     object.scale.set(piece.radius*piece.sizeX,piece.radius*piece.sizeY,piece.radius*piece.sizeZ);object.updateMatrix();
     let lift=-Infinity;

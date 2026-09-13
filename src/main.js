@@ -1,5 +1,6 @@
 import './style.css';
 import { studies } from './styles.js';
+import { FIRE_SCENES, getFireScene } from './fire-scenes.js';
 import { BonfireViewer } from './scene.js';
 import { mountBurnPanel } from './burn-panel.js';
 import { FireAudio } from './fire-audio.js';
@@ -20,6 +21,7 @@ document.querySelector('#app').innerHTML=`
  <main>
   <section class="stage" aria-label="Bonfire rendering">
    <div id="canvas-container"></div>
+   <div class="scene-controls"><label for="fire-scene">Scene<select id="fire-scene" aria-describedby="scene-limits">${FIRE_SCENES.map(scene=>`<option value="${scene.id}">${scene.label}</option>`).join('')}</select></label><span id="scene-limits" aria-live="polite">7 pieces · all fuel types. Switching starts a new fire.</span></div>
    <div class="study-caption"><div id="study-tag" class="eyebrow"></div><h1 id="study-title"></h1><p id="study-description"></p><span id="frozen-label" class="frozen"><span class="pause-icon">Ⅱ</span> A moment, held still</span><button id="motion-toggle" class="motion-toggle" hidden>Pause motion</button></div>
    <div class="stage-index"><span class="index-total">STUDY </span><span id="study-number">07</span></div>
    <details class="layers-panel"><summary>Scene layers <span>＋</span></summary><div class="layer-list">${[['flames','Flames'],['smoke','Smoke'],['steam','Log-end steam'],['sparks','Embers & sparks'],['glow','Fire glow']].map(([id,label])=>`<label><span>${label}</span><input type="checkbox" data-layer="${id}" checked><span class="switch"></span></label>`).join('')}</div></details>
@@ -102,6 +104,8 @@ function mountAudioControls(){
 }
 function loadStudy(config){
  current=config;
+ // The original still studies remain their historical outdoor compositions.
+ if(!config.animated&&viewer?.sceneId!=='pit')viewer?.setScene('pit');
  const collection=config.collection||'originals';collectionMemory[collection]=config.id;
  renderNavigation(collection);
  document.body.dataset.style=config.id;document.documentElement.style.setProperty('--accent',config.color);
@@ -111,6 +115,17 @@ function loadStudy(config){
  document.querySelectorAll('[data-study]').forEach(link=>{const active=link.dataset.study===config.id;link.classList.toggle('active',active);if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
  document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('selected',b.dataset.view==='full');b.setAttribute('aria-pressed',b.dataset.view==='full');});
  if(viewer){viewer.load(config);document.querySelectorAll('[data-layer]').forEach(input=>viewer.setLayer(input.dataset.layer,input.checked));}
+ updateSceneInfo();
+}
+function updateSceneInfo(){
+ const scene=getFireScene(viewer?.sceneId);
+ document.querySelector('#fire-scene').value=scene.id;
+ document.querySelector('#scene-limits').textContent=`${scene.limits}. Switching starts a new fire.`;
+ document.body.dataset.fireScene=scene.id;
+ document.querySelector('.stage').dataset.fireScene=scene.id;
+ document.querySelector('#study-title').textContent=scene.mouth?scene.label:current.name;
+ document.querySelector('#study-description').textContent=scene.mouth?scene.description:current.description;
+ document.title=`${scene.mouth?scene.label:current.name} — Bonfire`;
 }
 try{
  viewer=new BonfireViewer(document.querySelector('#canvas-container'));
@@ -152,10 +167,19 @@ try{
  };
  loadStudy(resolveStudy());
  mountFocusMode(viewer,{initial:preferences.focus,onChange:active=>savePreferences({focus:active})});
- window.bonfire={viewer,studies,get current(){return current.id;}};
+ window.bonfire={viewer,studies,fireScenes:FIRE_SCENES,get current(){return current.id;}};
 }catch(error){
  console.error(error);document.querySelector('#loading').innerHTML='This study needs WebGL 2. Please open it in a browser with hardware acceleration enabled.';
 }
+document.querySelector('#fire-scene').addEventListener('change',event=>{
+ if(!viewer)return;
+ const sceneId=event.target.value;
+ // Still studies are a gallery; selecting a place always brings up the fire engine.
+ if(!current.animated){const config=studies.find(study=>study.id==='wild-draft');history.pushState({},'',`/study/${config.id}`);loadStudy(config);}
+ viewer.setScene(sceneId);updateSceneInfo();
+ document.querySelectorAll('[data-layer]').forEach(input=>viewer.setLayer(input.dataset.layer,input.checked));
+ document.querySelectorAll('[data-view]').forEach(button=>{const active=button.dataset.view==='full';button.classList.toggle('selected',active);button.setAttribute('aria-pressed',active);});
+});
 document.querySelector('.study-nav').addEventListener('click',e=>{const link=e.target.closest('[data-study]');if(!link||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;e.preventDefault();history.pushState({},'',link.href);loadStudy(studies.find(s=>s.id===link.dataset.study));});
 document.querySelectorAll('[data-collection]').forEach(button=>button.addEventListener('click',()=>{if(selectedCollection===button.dataset.collection)return;const config=studies.find(s=>s.id===collectionMemory[button.dataset.collection]);history.pushState({},'',`/study/${config.id}`);loadStudy(config);}));
 addEventListener('popstate',()=>loadStudy(resolveStudy()));

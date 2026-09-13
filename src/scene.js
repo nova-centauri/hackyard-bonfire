@@ -10,7 +10,9 @@ import { createVolume } from './volume.js';
 import { addStylizedFire } from './stylized.js';
 import { createHybridFire } from './hybrid-fire.js';
 import { createMotionState, updateStudyMotion } from './motion.js';
-import { BurnCycle, SPEEDS } from './lifecycle.js';
+import { SPEEDS } from './lifecycle.js';
+import { FIRE_SCENES, getFireScene, createSceneCycle, sceneLogDefinitions } from './fire-scenes.js';
+import { addFireSet, containParticles } from './fire-sets.js';
 import { addDirtClearing, groundHeight } from './ground.js';
 import { addStoneRing } from './rocks.js';
 import { createCoalBed } from './coal-bed.js';
@@ -41,7 +43,7 @@ function branch(scene,a,b,r,material,sides=7) {
 
 export class BonfireViewer {
  constructor(container) {
-  this.container=container;this.scenes=new Map();this.cloud=cloudTexture();this.detail='full';
+  this.container=container;this.scenes=new Map();this.cloud=cloudTexture();this.detail='full';this.sceneId='pit';this.fireSeed=8108;
   this.paused=false;this.speed=1;this.autoFeed=true;this.frameCount=0;this.depthDirty=true;this.lastTick=null;this.lastDraw=0;this.needsRender=false;this.lastShadow=0;
   // Level of detail: the governor picks a tier from window size and measured
   // frame pacing; applyQuality() pushes that tier into every render system.
@@ -199,8 +201,9 @@ export class BonfireViewer {
  loadTextures(study) {
   if(study.texturesRequested||!Object.keys(TEXTURE_MANIFEST).length)return;
   study.texturesRequested=true;
-  loadAuthoredTextures(TEXTURE_MANIFEST,study.textureRegistry,()=>collectMaterials([study.scene]),{base:import.meta.env?.BASE_URL||'/'})
+  loadAuthoredTextures(TEXTURE_MANIFEST,study.textureRegistry,()=>[...collectMaterials([study.scene]),...Object.values(study.fuelMaterials)],{base:import.meta.env?.BASE_URL||'/'})
    .then(report=>{
+    if(study.disposed){this.disposeStudy(study);return;}
     console.info('Bonfire textures:',report);
     // Authored crack masks steer the procedural char glow; procedural masks do not.
     if(report.bark?.emissive==='applied')authoredEmissive.bark.value=1;
@@ -231,6 +234,12 @@ export class BonfireViewer {
   this.config=config;
   if(!this.scenes.has(config.id))this.scenes.set(config.id,this.buildScene(config));
   this.current=this.scenes.get(config.id);this.renderPass.scene=this.current.scene;
+  const indoor=!!this.current.fireScene.mouth;
+  this.controls.minAzimuthAngle=indoor?-.48:-Infinity;this.controls.maxAzimuthAngle=indoor?.48:Infinity;
+  this.controls.minPolarAngle=indoor?Math.PI*.32:0;this.controls.maxPolarAngle=Math.PI*.48;
+  this.controls.enablePan=!indoor;
+  this.controls.minDistance=indoor?this.current.fireScene.mouth.depth/2+2:2.1;
+  this.controls.maxDistance=indoor?15:19;
   this.applyStudyQuality(this.current);this.governor.reset(performance.now(),'scene');
   this.loadTextures(this.current);
   this.poker?.sync();
@@ -244,10 +253,42 @@ export class BonfireViewer {
   this.onPlaybackChange?.();
   this.onLifecycleChange?.();
  }
+ setScene(id) {
+  if(id===this.sceneId||!FIRE_SCENES.some(scene=>scene.id===id))return false;
+  this.poker?.reset();this.poker?.visual.removeFromParent();
+  // Never cache a fire across places, even through another rendering study.
+  for(const study of this.scenes.values())this.disposeStudy(study);
+  this.scenes.clear();this.current=null;
+  this.sceneId=id;this.fireSeed=crypto.getRandomValues(new Uint32Array(1))[0];
+  if(this.config)this.load(this.config);
+  return true;
+ }
+ disposeStudy(study) {
+  study.disposed=true;
+  const materials=new Set([...collectMaterials([study.scene]),...Object.values(study.fuelMaterials)]),textures=new Set();
+  study.scene.traverse(object=>{if(object.isInstancedMesh)object.dispose();object.geometry?.dispose();object.shadow?.map?.dispose();});
+  for(const material of materials){
+    for(const value of Object.values(material))if(value?.isTexture)textures.add(value);
+    for(const uniform of Object.values(material.uniforms||{}))if(uniform.value?.isTexture)textures.add(uniform.value);
+    material.dispose();
+  }
+  for(const handles of Object.values(study.textureRegistry))for(const texture of Object.values(handles))if(texture?.isTexture)textures.add(texture);
+  for(const texture of study.proceduralTextures)textures.add(texture);
+  if(study.burnVisuals)textures.add(study.burnVisuals.burnMap);
+  if(study.ashBed)textures.add(study.ashBed.userData.ashState.heatMap);
+  for(const texture of textures)if(texture!==this.cloud&&texture!==this.depthTarget.depthTexture)texture.dispose();
+ }
  setView(view) {
   if(!this.config)return;this.detail=view;
   const c=this.config;
-  if(view==='logs'){this.camera.position.set(3.3,2.5,4.6);this.controls.target.set(.03,.94,.15);}
+  const place=this.current.fireScene;
+  if(place.mouth){
+    const scale=view==='logs'?.76:view==='coals'?.62:1;
+    this.controls.target.fromArray(view==='full'?place.target:[0,view==='coals'?.25:.6,0]);
+    this.camera.position.fromArray(place.camera).multiplyScalar(scale);
+    if(this.camera.aspect<1)this.camera.position.z*=1.25;
+  }
+  else if(view==='logs'){this.camera.position.set(3.3,2.5,4.6);this.controls.target.set(.03,.94,.15);}
   else if(view==='coals'){this.camera.position.set(2.65,1.65,3.15);this.controls.target.set(.05,.35,.6);}
   else {this.camera.position.fromArray(c.camera);this.controls.target.fromArray(c.target);if(this.camera.aspect<1)this.camera.position.multiplyScalar(1.3);}
   this.camera.updateMatrixWorld();this.controls.update();this.depthDirty=true;this.queueRender();
@@ -360,23 +401,28 @@ export class BonfireViewer {
   if(this.onRender)this.onRender();
  }
  buildScene(config) {
+  const fireScene=getFireScene(this.sceneId),indoor=!!fireScene.mouth;
   const rand=random(config.seed),mode=config.solidMode??config.mode,hybrid=config.fireVariant!==undefined,scene=new THREE.Scene(),volumes=[];
   scene.background=new THREE.Color(config.background);scene.fog=new THREE.FogExp2(config.background,mode===2&&!hybrid?.015:.033);
   const layers={};for(const name of ['flames','smoke','sparks','steam']){layers[name]=new THREE.Group();layers[name].name=name;scene.add(layers[name]);}
   const opaque=new THREE.Group();scene.add(opaque);
+  const set=indoor?addFireSet(opaque,fireScene):null;
   const wood=woodTextures(config.seed,mode);
   const groundMat=new THREE.MeshStandardMaterial({color:hybrid?'#000000':config.ground,roughness:mode===3?.2:1,metalness:mode===3?.65:0});
-  const floor=mesh(opaque,new THREE.PlaneGeometry(200,200),groundMat);floor.rotation.x=-Math.PI/2;floor.position.y=hybrid?-.4:-.11;floor.castShadow=false;
+  const floor=mesh(opaque,new THREE.PlaneGeometry(200,200),groundMat);floor.rotation.x=-Math.PI/2;floor.position.y=hybrid?-.4:-.11;floor.castShadow=false;floor.visible=!indoor;
   const dirtMat=new THREE.MeshStandardMaterial({color:mode===2?'#aaa69a':mode===1?'#303d4a':'#151512',roughness:1});
   const dirtGeo=new THREE.CylinderGeometry(2.32,2.5,.16,mode===1?11:70);
   if(mode===0||mode===4){const p=dirtGeo.attributes.position;for(let i=0;i<p.count;i++){const a=Math.atan2(p.getZ(i),p.getX(i)),f=1+Math.sin(a*7)*.024+Math.sin(a*13)*.014;p.setX(i,p.getX(i)*f);p.setZ(i,p.getZ(i)*f);}dirtGeo.computeVertexNormals();}
   const dirt=mesh(opaque,dirtGeo,dirtMat,V(0,-.09,0));
-  let ashSurface=dirt;
-  if(hybrid){dirt.visible=false;ashSurface=addDirtClearing(opaque,config.seed);}
+  let ashSurface=set?.surface||dirt;
+  if(indoor)dirt.visible=false;
+  else if(hybrid){dirt.visible=false;ashSurface=addDirtClearing(opaque,config.seed);}
   if(mode===3)dirt.material=new THREE.MeshStandardMaterial({color:'#121820',roughness:.23,metalness:.8});
   const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':hybrid?'#c4b496':'#9cadc6',mode===2&&!hybrid?'#827f72':'#1c1612',hybrid?.2:mode===2?2.3:.65);scene.add(ambient);
+  if(indoor&&hybrid)ambient.intensity=.55;
   const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':hybrid?'#c8c0d2':'#b2c9e4',hybrid?.28:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=!hybrid;
   moon.shadow.mapSize.set(2048,2048);moon.shadow.camera.left=-4;moon.shadow.camera.right=4;moon.shadow.camera.top=5;moon.shadow.camera.bottom=-4;moon.shadow.normalBias=.035;scene.add(moon);
+  if(indoor&&hybrid){moon.position.set(-3,5,7);moon.intensity=.65;}
   const light=new THREE.PointLight('#ff9a43',hybrid?22:mode===2?7:21,hybrid?8.8:9,2);light.position.set(0,hybrid?.85:1.45,0);scene.add(light);
   if(hybrid){light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.12;light.shadow.camera.far=8.8;light.shadow.bias=-.0006;light.shadow.normalBias=.016;light.shadow.radius=1.6;}
   const coreLight=new THREE.PointLight('#ff4a12',hybrid?5.6:8,hybrid?3.2:5,2);coreLight.position.set(0,hybrid?.16:.38,.08);scene.add(coreLight);
@@ -387,19 +433,11 @@ export class BonfireViewer {
   if(mode===1){barkMat.flatShading=true;barkMat.bumpScale=0;barkMat.color.set('#c39569');}
   if(mode===2){barkMat.color.set('#b6ada2');barkMat.emissiveIntensity=.45;endMat.emissiveIntensity=.2;}
   if(mode===3){barkMat.metalness=.7;barkMat.roughness=.26;barkMat.emissiveIntensity=1.8;}
-  const logDefs=[
-   [[-1.45,.27,.8],[1.3,.43,-.6],.25],
-   [[1.28,.31,1.08],[-1.22,.42,-.72],.28],
-   [[-.85,.32,1.4],[.62,.66,-1.15],.23],
-   [[-1.22,.43,-.96],[.1,1.37,.1],.25],
-   [[1.3,.45,-.8],[-.22,1.4,.3],.24],
-   [[-1.16,.56,.5],[.92,1.03,-.17],.23],
-   [[.85,.52,.95],[-.22,1.62,-.12],.22],
-  ];
+  const logDefs=sceneLogDefinitions(fireScene.id);
   if(mode===4){for(let i=3;i<logDefs.length;i++){logDefs[i][0][1]*=.8;logDefs[i][1][1]*=.58;}}
-  const cycle=hybrid?new BurnCycle(8108):null,logMeshes=[],steamOrigins=[];
+  const cycle=hybrid?createSceneCycle(fireScene.id,this.fireSeed):null,logMeshes=[],steamOrigins=[];
   const fuelMaterials={barkMat,endMat,exposedMat};
-  const buildFuel=(li,fuel)=>createSceneFuelMesh({definition:logDefs[li],fuelType:fuel?.fuelType,seed:hybrid?cycle.seed+fuel.id*7919:config.seed+li*7919,mode,hybrid,...(hybrid?{}:{rand})},fuelMaterials);
+  const buildFuel=(li,fuel)=>createSceneFuelMesh({definition:logDefs[li],fuelType:fuel?.fuelType||(fireScene.id==='stove'?'small-log':'log'),seed:hybrid?cycle.seed+fuel.id*7919:config.seed+li*7919,mode,hybrid,...(hybrid?{}:{rand})},fuelMaterials);
   for(let li=0;li<logDefs.length;li++) {
     const [aa,bb]=logDefs[li],a=new THREE.Vector3(...aa),b=new THREE.Vector3(...bb);
     const dir=b.clone().sub(a);
@@ -410,12 +448,14 @@ export class BonfireViewer {
   // One instanced draw carries every steam puff; origins follow the log ends.
   const steam=createSteam({logs:steamOrigins.length,perLog:15,map:this.cloud,color:mode===2&&!hybrid?'#7b807b':'#818986'});
   steamOrigins.forEach((origin,li)=>steam.setOrigin(li,origin));layers.steam.add(steam);
-  const coals=createCoalBed({seed:config.seed,mode,animated:hybrid,groundHeight:hybrid?groundHeight:()=>0});
+  const sceneGround=hybrid&&!indoor?groundHeight:()=>0;
+  const coals=createCoalBed({seed:config.seed,mode,animated:hybrid,groundHeight:sceneGround,
+    footprint:indoor?[fireScene.mouth.width*.22,fireScene.mouth.depth*.22]:[1,1]});
   const coalMat=coals.material,obj=new THREE.Object3D();
   const ash=createAshBed(ashSurface);
   opaque.add(coals);
   if(!hybrid)updateAshBed(ash,{seed:config.seed,resetSerial:0,time:0,coalMass:.5,ashMass:.2},coals,0,true);
-  const stoneRing=addStoneRing(opaque,{seed:config.seed,mode,hybrid});
+  const stoneRing=indoor?null:addStoneRing(opaque,{seed:config.seed,mode,hybrid});
   // Handles for the texture loader: each procedural texture and the slots it fills.
   const textureRegistry={bark:{map:wood.bark,bump:wood.bark,emissive:wood.emission},endGrain:{map:wood.end,bump:wood.end,emissive:wood.endGlow},
     exposedWood:{map:wood.exposed,bump:wood.exposed},soil:{map:ashSurface.material.map,bump:ashSurface.material.bumpMap},smokePuff:{map:this.cloud}};
@@ -425,10 +465,10 @@ export class BonfireViewer {
     obj.position.set(Math.cos(a)*r,-.035+rand()*.05,Math.sin(a)*r);
     if(hybrid)obj.position.y=groundHeight(obj.position.x,obj.position.z)+.006;obj.rotation.set(rand()*3,rand()*3,rand()*3);
     const s=.004+rand()*.035;obj.scale.set(s,s*.35,s*1.5);obj.updateMatrix();debris.setMatrixAt(i,obj.matrix);
-  }opaque.add(debris);
+  }opaque.add(debris);debris.visible=!indoor;
   const twigMat=new THREE.MeshStandardMaterial({color:mode===2?'#32291f':'#161410',roughness:1,emissive:'#7d1d05',emissiveIntensity:.55});
   const twigs=new THREE.Group();opaque.add(twigs);
-  for(let k=0;k<26;k++){
+  for(let k=0;k<(indoor?0:26);k++){
     const a=V((rand()-.5)*2.9,.13+rand()*.3,(rand()-.5)*2.7),b=a.clone().add(V((rand()-.5)*.95,.15+rand()*.7,(rand()-.5)*.75));
     branch(twigs,a,b,.016+rand()*.018,twigMat);
     const fork=a.clone().lerp(b,.58);branch(twigs,fork,b.clone().add(V(.2,.12,-.18)),.009,twigMat,5);
@@ -441,14 +481,15 @@ export class BonfireViewer {
       }
     }
   }
-  for(let j=0;j<2;j++){
+  for(let j=0;j<(indoor?0:2);j++){
     const a=V(-.54+j*.61,.22,1.18-j*.15),b=a.clone().add(V(.25,.36,-.61));
     branch(twigs,a,b,.023,twigMat);branch(twigs,a.clone().lerp(b,.55),b.clone().add(V(.15,.09,.07)),.013,twigMat);
   }
-  if(hybrid){const fire=createHybridFire(config,this.depthTarget.depthTexture,logDefs);layers.flames.add(fire);volumes.push(fire);}
+  const effectConfig=indoor?{...config,mouth:fireScene.mouth,flameScale:fireScene.flameScale}:config;
+  if(hybrid){const fire=createHybridFire(effectConfig,this.depthTarget.depthTexture,logDefs);layers.flames.add(fire);volumes.push(fire);}
   else if(mode===0||mode===4){const fire=createVolume('fire',config,this.depthTarget.depthTexture);layers.flames.add(fire);volumes.push(fire);}
-  if(mode!==1){const smoke=createVolume('smoke',config,this.depthTarget.depthTexture);layers.smoke.add(smoke);volumes.push(smoke);}
-  addStylizedFire(layers,hybrid?{...config,mode:0}:config,logDefs);
+  if(mode!==1){const smoke=createVolume('smoke',effectConfig,this.depthTarget.depthTexture);layers.smoke.add(smoke);volumes.push(smoke);}
+  if(!indoor||!hybrid)addStylizedFire(layers,hybrid?{...config,mode:0}:config,logDefs);
   // GPU embers share the fire's source and fuel arrays, so sparks rise from
   // whatever is actually burning and stop with it.
   const fireVolume=volumes.find(v=>v.material.uniforms.uSources);
@@ -456,7 +497,8 @@ export class BonfireViewer {
   layers.sparks.add(embers);
   if(hybrid){twigs.position.y=-.16;layers.flames.children.forEach(m=>{if(m.userData.twigFlame)m.position.y=-.16;});}
   const twigInstances=createTwigInstances(twigs,layers);
-  const study={groundHeight:hybrid?groundHeight:()=>0,rockColliders:stoneRing.userData.colliders,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0,
+  const study={fireScene,groundHeight:sceneGround,rockColliders:set?.colliders||stoneRing.userData.colliders,arrivalLift:indoor?.28:.92,scene,opaque,layers,volumes,logDefs,logMeshes,twigs,coals,ashBed:ash,config,animationTime:0,fuelMaterials,
+    proceduralTextures:new Set(Object.values(textureRegistry).flatMap(handles=>Object.values(handles)).filter(texture=>texture?.isTexture)),
     shadowLights:[light,moon].filter(l=>l.castShadow),steam,embers,twigInstances,textureRegistry};
   if(config.animated){
     study.motion=createMotionState(layers,{embers,steam,twigInstances,lights:[light,coreLight],coalMaterial:coalMat,barkMaterial:barkMat,clearingLight:ashSurface.userData.clearingLight});
@@ -476,6 +518,7 @@ export class BonfireViewer {
       return changed;
     };
     study.burnVisuals=createBurnVisuals(study);
+    if(indoor)containParticles(layers,fireScene.mouth);
     updateBurnVisuals(study,true);updateStudyMotion(study);
   }
   return study;

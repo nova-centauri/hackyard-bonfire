@@ -33,6 +33,10 @@ const noise = `
 export function createHybridFire(config, depthTexture, logDefs) {
   const variant = config.fireVariant;
   const sources = inkFlameSources(config.seed);
+  if (config.mouth) for (const source of sources) {
+    source.height *= config.flameScale; source.width *= config.flameScale;
+    source.lean.multiplyScalar(config.flameScale);
+  }
   const lo = new THREE.Vector3(-2.15, -.32, -2.15), hi = new THREE.Vector3(2.35, 4.55, 2.15);
   // Bounds follow the actual burning pieces, including logs that roll out of
   // the stack. The unit box is expanded in the vertex shader.
@@ -48,7 +52,7 @@ export function createHybridFire(config, depthTexture, logDefs) {
       uLogBasisX: { value: Array.from({ length: 7 }, () => new THREE.Vector3(1, 0, 0)) },
       uLogBasisZ: { value: Array.from({ length: 7 }, () => new THREE.Vector3(0, 0, 1)) },
       uSourceMotion: { value: sources.map(() => new THREE.Vector4(0, 0, 1, 1)) },
-      uIntensity: { value: 1 }, uImpact: { value: 0 }, uFuel: { value: Array(12).fill(1) }, uLogHeat: { value: Array(7).fill(1) },
+      uIntensity: { value: 1 }, uImpact: { value: 0 }, uFuel: { value: Array.from({ length: 12 }, (_, i) => i % 7 < logDefs.length ? 1 : 0) }, uLogHeat: { value: Array.from({ length: 7 }, (_, i) => i < logDefs.length ? 1 : 0) },
       // Level of detail: ray-march sample count, noise octaves and whether the
       // thin surface combustion sheath is evaluated at all.
       uSteps: { value: 88 }, uOctaves: { value: 3 }, uContact: { value: 1 },
@@ -56,8 +60,8 @@ export function createHybridFire(config, depthTexture, logDefs) {
       uWind: { value: new THREE.Vector2() },
       uSources: { value: sources.map(s => new THREE.Vector4(...s.base.toArray(), s.height)) },
       uShapes: { value: sources.map(s => new THREE.Vector4(s.width, s.lean.x, s.lean.y, s.phase)) },
-      uLogA: { value: logDefs.map(d => new THREE.Vector4(...d[0], d[2])) },
-      uLogB: { value: logDefs.map(d => new THREE.Vector4(...d[1], d[2] * .9)) },
+      uLogA: { value: Array.from({ length: 7 }, (_, i) => logDefs[i] ? new THREE.Vector4(...logDefs[i][0], logDefs[i][2]) : new THREE.Vector4(0, 0, 0, 0)) },
+      uLogB: { value: Array.from({ length: 7 }, (_, i) => logDefs[i] ? new THREE.Vector4(...logDefs[i][1], logDefs[i][2] * .9) : new THREE.Vector4(0, 1, 0, 0)) },
     },
     vertexShader: 'uniform vec3 uLo,uHi;varying vec3 vPosition;void main(){vPosition=mix(uLo,uHi,position+.5);gl_Position=projectionMatrix*modelViewMatrix*vec4(vPosition,1.);}',
     fragmentShader: `precision highp float;
@@ -230,6 +234,11 @@ export function createHybridFire(config, depthTexture, logDefs) {
       }
     }
     if (!active) { lo.set(-.1, -.1, -.1); hi.set(.1, .1, .1); }
+    if (config.mouth) {
+      const { width, height, depth } = config.mouth;
+      lo.max(new THREE.Vector3(-width / 2, 0, -depth / 2));
+      hi.min(new THREE.Vector3(width / 2, height, depth / 2));
+    }
   };
   return mesh;
 }
