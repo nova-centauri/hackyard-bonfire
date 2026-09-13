@@ -266,7 +266,7 @@ export class BonfireViewer {
  disposeStudy(study) {
   study.disposed=true;
   const materials=new Set([...collectMaterials([study.scene]),...Object.values(study.fuelMaterials)]),textures=new Set();
-  study.scene.traverse(object=>{object.geometry?.dispose();object.shadow?.map?.dispose();});
+  study.scene.traverse(object=>{if(object.isInstancedMesh)object.dispose();object.geometry?.dispose();object.shadow?.map?.dispose();});
   for(const material of materials){
     for(const value of Object.values(material))if(value?.isTexture)textures.add(value);
     for(const uniform of Object.values(material.uniforms||{}))if(uniform.value?.isTexture)textures.add(uniform.value);
