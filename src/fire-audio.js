@@ -1,11 +1,17 @@
 const clamp = (value, low = 0, high = 1) => Math.max(low, Math.min(high, Number.isFinite(value) ? value : low));
 const MAX_VOICES = 10;
 const RECORDING_URL = `${import.meta.env?.BASE_URL || '/'}audio/campfire-soft.mp3`;
-const BED_CROSSFADE = 2;
-// The recording's own crackle is muffled through the fire's quiet spells: the
-// bed's low-pass sits open when the fire is restless and closes toward this
-// floor in a lull, leaving the roar and losing the snap of the clicks.
-const BED_TONE_FLOOR = 1300, BED_TONE_OPEN = 4800;
+// Passages used to swell in over two linear seconds; that read as a wind
+// whoosh every time a new slice started. Longer equal-power-ish fades keep
+// the crackle and lose the air.
+const BED_CROSSFADE = 4.5;
+const BED_RELEASE = 1.05;
+const BED_GAIN_TAU = 2.6;
+const BED_TONE_TAU = 2.8;
+// A high-pass takes the remaining rumble/whoosh; the low-pass still darkens
+// a little in a lull but stays high enough that the recording's clicks remain
+// instead of leaving a roar.
+const BED_AIR = 240, BED_TONE_FLOOR = 2800, BED_TONE_OPEN = 5000;
 
 // The quiet bed is a locally bundled CC0 campfire field recording; details and
 // processing are in public/audio/ATTRIBUTION.md. Responsive wood/ash sounds and
@@ -117,21 +123,23 @@ export class FireAudio {
       this._nextCrackle = this.context.currentTime + .8 + this.random() * 2;
       this._nextBed = this.context.currentTime + .03;
       if (this.context.state !== 'running') this.context.resume().catch(() => this._silence());
-      this._target(this.master.gain, this.volume * .7, .18);
+      this._target(this.master.gain, this.volume * .7, .65);
     }
     const now = this.context.currentTime;
     if (now >= this._nextBedModulation) {
-      this._bedVariation = .87 + this.random() * .22;
-      this._nextBedModulation = now + 2 + this.random() * 3;
+      this._bedVariation = .95 + this.random() * .08;
+      this._nextBedModulation = now + 8 + this.random() * 8;
     }
     // Real crackles supply the detail. The synthetic fallback stays soft and
-    // loses its noise bed completely as the recording fades in.
+    // loses its noise bed completely as the recording fades in. Gusts stir the
+    // close-crack rate only: they must not swell this bed into a whoosh.
     const fallback = this.recording ? 0 : 1;
-    this._target(this.body.gain, fallback * (.018 + flame * .025 + heat * .008) * this._bedVariation, .8);
-    this._target(this.hiss.gain, fallback * (.0007 + flame * .0025), .8);
-    this._target(this.bodyFilter.frequency, 330 + flame * 310, .8);
-    this._target(this.recordedBed.gain, (1.35 + flame * .8 + heat * .15) * this._bedVariation * (1 + gust * .12) * (.93 + lively * .07), 1.2);
-    this._target(this.bedTone.frequency, BED_TONE_FLOOR + (BED_TONE_OPEN - BED_TONE_FLOOR) * Math.pow(lively, .7), 1.5);
+    this._target(this.body.gain, fallback * (.012 + flame * .018 + heat * .006) * this._bedVariation, 1.4);
+    this._target(this.hiss.gain, fallback * (.0005 + flame * .0018), 1.4);
+    this._target(this.bodyFilter.frequency, 330 + flame * 310, 1.4);
+    const bed = (.55 + flame * .4 + heat * .07) * this._bedVariation * (.52 + lively * .48);
+    this._target(this.recordedBed.gain, bed, BED_GAIN_TAU);
+    this._target(this.bedTone.frequency, BED_TONE_FLOOR + (BED_TONE_OPEN - BED_TONE_FLOOR) * Math.pow(lively, .7), BED_TONE_TAU);
     if (this.recording && now + .15 >= this._nextBed) this._scheduleRecording(now);
     // Contacts in one tumble share a soft sluff. A real-time refractory period
     // keeps rolling/repeated contacts from sounding like a machine gun.
@@ -177,14 +185,16 @@ export class FireAudio {
     this.whiteNoise = this._noiseBuffer(3, false);
     this.brownNoise = this._noiseBuffer(5, true);
     this.recordedBed = context.createGain(); this.recordedBed.gain.value = 0;
+    this.bedAir = context.createBiquadFilter();
+    this.bedAir.type = 'highpass'; this.bedAir.frequency.value = BED_AIR; this.bedAir.Q.value = .5;
     this.bedTone = context.createBiquadFilter();
     this.bedTone.type = 'lowpass'; this.bedTone.frequency.value = BED_TONE_OPEN; this.bedTone.Q.value = .4;
-    this.recordedBed.connect(this.bedTone).connect(this.master);
+    this.recordedBed.connect(this.bedAir).connect(this.bedTone).connect(this.master);
     this.bodyFilter = context.createBiquadFilter();
     this.bodyFilter.type = 'lowpass';
     this.bodyFilter.frequency.value = 650;
     const lowCut = context.createBiquadFilter();
-    lowCut.type = 'highpass'; lowCut.frequency.value = 125;
+    lowCut.type = 'highpass'; lowCut.frequency.value = 180;
     this.body = context.createGain(); this.body.gain.value = 0;
     this.bodySource = context.createBufferSource();
     this.bodySource.buffer = this.brownNoise; this.bodySource.loop = true;
@@ -195,7 +205,7 @@ export class FireAudio {
     this.hissSource = context.createBufferSource();
     this.hissSource.buffer = this.whiteNoise; this.hissSource.loop = true;
     this.hissSource.connect(this.hissFilter).connect(this.hiss).connect(this.master);
-    this._bedNodes = [this.bodySource, this.hissSource, lowCut, this.bodyFilter, this.body, this.hissFilter, this.hiss, this.recordedBed, this.bedTone];
+    this._bedNodes = [this.bodySource, this.hissSource, lowCut, this.bodyFilter, this.body, this.hissFilter, this.hiss, this.recordedBed, this.bedAir, this.bedTone];
     this.bodySource.start(); this.hissSource.start(0, .71);
   }
 
@@ -229,10 +239,10 @@ export class FireAudio {
     const source = this.context.createBufferSource(), envelope = this.context.createGain();
     source.buffer = this.recording;
     source.connect(envelope).connect(this.recordedBed);
-    envelope.gain.setValueAtTime(0, start);
-    envelope.gain.linearRampToValueAtTime(1, start + BED_CROSSFADE);
+    envelope.gain.setValueAtTime(.0001, start);
+    envelope.gain.exponentialRampToValueAtTime(1, start + BED_CROSSFADE);
     envelope.gain.setValueAtTime(1, start + duration - BED_CROSSFADE);
-    envelope.gain.linearRampToValueAtTime(0, start + duration);
+    envelope.gain.exponentialRampToValueAtTime(.0001, start + duration);
     this._registerVoice(this.recordingVoices, [source], [envelope], [envelope.gain], source);
     source.start(start, offset, duration);
     source.stop(start + duration + .01);
@@ -419,14 +429,14 @@ export class FireAudio {
     this._nextCrackle = Infinity;
     this._nextBed = Infinity;
     for (const voice of this.voices) voice.stop(this._disposed ? 0 : .045);
-    for (const voice of this.recordingVoices) voice.stop(this._disposed ? 0 : .045);
+    for (const voice of this.recordingVoices) voice.stop(this._disposed ? 0 : BED_RELEASE);
     if (!this.context || this.context.state === 'closed') return;
-    this._target(this.master.gain, 0, .025);
+    this._target(this.master.gain, 0, this._disposed ? .001 : .32);
     clearTimeout(this._suspendTimer);
     this._suspendTimer = setTimeout(() => {
       this._suspendTimer = null;
       if (!this._active && this.context?.state === 'running') this.context.suspend().catch(() => {});
-    }, 130);
+    }, this._disposed ? 0 : (BED_RELEASE + .12) * 1000);
   }
 
   dispose() {

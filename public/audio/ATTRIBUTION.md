@@ -20,8 +20,9 @@ measures approximately -34.1 dBFS average and -11.1 dBFS sample peak before the
 app's volume control. Those are digital measurements, not a playback loudness
 guarantee for a particular device.
 
-The app overlaps two-second fades between different 12–19 second passages,
-preserves pitch, and adds infrequent quiet procedural cracks. Wood-settling
+The app overlaps several-second exponential fades between different 12–19
+second passages, high-passes the remaining rumble, preserves pitch, and adds
+infrequent quiet procedural cracks. Wood-settling
 sounds are procedural layers of softly filtered scraping noise and damped wood
 resonance, triggered by physical impacts. They are not claimed to be recordings
 of the simulated logs. A much quieter synthetic noise bed is used if the bundled

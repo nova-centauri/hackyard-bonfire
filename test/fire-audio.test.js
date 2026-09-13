@@ -141,14 +141,15 @@ test('recording loads only after enable, fades overlapping passages, and preserv
     assert.ok(first); assert.equal(first.loop, undefined, 'long passages crossfade rather than hard-loop');
     const [start, offset, duration] = first.starts[0];
     const envelope = first.connections[0].gain.events;
-    assert.equal(envelope[0].value, 0); assert.equal(envelope.at(-1).value, 0);
-    assert.ok(Math.abs(envelope[1].time - start - 2) < 1e-8, 'recording fades in over two seconds');
+    assert.ok(envelope[0].value < .001); assert.ok(envelope.at(-1).value < .001);
+    assert.equal(envelope[1].type, 'exponential');
+    assert.ok(Math.abs(envelope[1].time - start - 4.5) < 1e-8, 'recording fades in over several seconds');
     assert.ok(duration >= 12 && duration <= 19);
     study.cycle.time = 50000; study.animationTime += .033; audio.update(study, true);
     assert.equal(audio.recordingVoices.size, 1, 'burn acceleration does not schedule extra passages');
     context.currentTime = audio._nextBed - .1; audio.update(study, true);
     const second = context.sources.filter(source => source.buffer === recording)[1];
-    assert.equal(second.starts[0][0], start + duration - 2);
+    assert.equal(second.starts[0][0], start + duration - 4.5);
     assert.notEqual(second.starts[0][1], offset, 'adjacent passages avoid repeating the same source offset');
     assert.equal(audio.recordingVoices.size, 2);
     first.onended(); assert.equal(audio.recordingVoices.size, 1); assert.equal(first.disconnected, true);
@@ -247,10 +248,10 @@ test('silencing releases recording and sluff envelopes before cleanup, even thro
     const oldEnvelope = oldRecording.connections[0].gain;
     const scrapeEnvelope = scrape.connections[0].connections[0].connections[0].gain;
     await audio.setEnabled(false);
-    for (const envelope of [oldEnvelope, scrapeEnvelope]) {
-      assert.deepEqual(envelope.events.at(-2), { type: 'hold', time: 4 });
-      assert.deepEqual(envelope.events.at(-1), { type: 'linear', value: 0, time: 4.045 });
-    }
+    assert.deepEqual(oldEnvelope.events.at(-2), { type: 'hold', time: 4 });
+    assert.deepEqual(oldEnvelope.events.at(-1), { type: 'linear', value: 0, time: 5.05 }, 'the whoosh bed releases over a second');
+    assert.deepEqual(scrapeEnvelope.events.at(-2), { type: 'hold', time: 4 });
+    assert.deepEqual(scrapeEnvelope.events.at(-1), { type: 'linear', value: 0, time: 4.045 }, 'a sluff still dies quickly');
     assert.equal(oldRecording.disconnected, false); assert.equal(scrape.disconnected, false);
     assert.ok(oldRecording.stopTimes.at(-1) > context.currentTime);
     assert.equal(audio.voices.size, 0); assert.equal(audio.recordingVoices.size, 0);
@@ -294,14 +295,14 @@ test('a lull muffles the recorded crackle and leaves out the close cracks; a liv
   try {
     study.burnVisuals.fireActivity = 1; audio.update(study, true);
     assert.equal(audio.bedTone.type, 'lowpass');
-    assert.ok(audio.bedTone.frequency.value >= 4700, 'a restless fire leaves the bed open');
+    assert.ok(audio.bedTone.frequency.value >= 4900, 'a restless fire leaves the bed open');
     const openGain = audio.recordedBed.gain.value;
     audio._nextCrackle = 1; context.currentTime = 1.1; audio.update(study, true);
     assert.equal(played.length, 1); assert.equal(played[0][1], false);
     const livelyInterval = audio._nextCrackle - context.currentTime;
     study.burnVisuals.fireActivity = 0; audio.update(study, true);
-    assert.ok(audio.bedTone.frequency.value <= 1300, 'a lull closes the bed tone over the recording\'s clicks');
-    assert.ok(audio.recordedBed.gain.value < openGain, 'the bed settles slightly in a lull');
+    assert.ok(audio.bedTone.frequency.value <= 2900 && audio.bedTone.frequency.value >= 2700, 'a lull darkens a little without closing down to a roar');
+    assert.ok(audio.recordedBed.gain.value < openGain * .65, 'the bed ducks in a lull instead of leaving a whoosh');
     audio._nextCrackle = 2; context.currentTime = 2.1; audio.update(study, true);
     assert.equal(played.length, 1, 'no close cracks in a lull');
     assert.ok(audio._nextCrackle > 2.1 && audio._nextCrackle <= 3.2, 'the lull is re-checked soon rather than scheduling a crack');
@@ -314,7 +315,7 @@ test('a lull muffles the recorded crackle and leaves out the close cracks; a liv
     audio.random = () => .2; audio._nextCrackle = 5; context.currentTime = 5.1; audio.update(study, true);
     assert.ok(audio._nextCrackle - context.currentTime < .25, 'lively cracks sometimes come in quick twos');
     delete study.burnVisuals.fireActivity; audio.update(study, true);
-    assert.ok(audio.bedTone.frequency.value >= 4700, 'no envelope means an open bed');
+    assert.ok(audio.bedTone.frequency.value >= 4900, 'no envelope means an open bed');
   } finally { audio.dispose(); }
 });
 
@@ -349,5 +350,36 @@ test('a loud pop is a louder, longer crack with a deep knock and an ember sizzle
     audio.setVolume(0); const count = context.sources.length;
     audio._playCrackle = FireAudio.prototype._playCrackle;
     audio._playCrackle(1, 'loud', 0); assert.equal(context.sources.length, count, 'muted fires make no loud pops');
+  } finally { audio.dispose(); }
+});
+
+test('the recorded whoosh is quieter, high-passed and slow; cracks, pops and sluffs still schedule', async () => {
+  const { audio, context, study } = await enabledFire();
+  const played = []; audio._playCrackle = (...args) => played.push(args);
+  try {
+    assert.equal(audio.bedAir.type, 'highpass');
+    assert.ok(audio.bedAir.frequency.value >= 200 && audio.bedAir.frequency.value <= 280, 'the bed cuts rumble rather than roaring');
+    assert.equal(audio.recordedBed.connections[0], audio.bedAir);
+    study.burnVisuals.fireActivity = 1;
+    audio.update(study, true);
+    const calmGain = audio.recordedBed.gain.value;
+    assert.ok(calmGain > .4 && calmGain < 1.05, `open bed ${calmGain} stays below a whoosh`);
+    const gainTau = audio.recordedBed.gain.events.filter(event => event.type === 'target').at(-1);
+    assert.ok(gainTau.constant >= 2, 'bed gain eases over seconds, not a swell');
+    study.weather = { gust: 1 };
+    audio.update(study, true);
+    assert.equal(audio.recordedBed.gain.value, calmGain, 'gusts stir crackle rate, not bed whoosh');
+    study.burnVisuals.fireActivity = 0; audio.update(study, true);
+    assert.ok(audio.recordedBed.gain.value < calmGain * .65, 'a lull ducks the bed instead of leaving a roar');
+    assert.ok(audio.bedTone.frequency.value >= 2700, 'a lull still passes the recording\'s clicks');
+    study.burnVisuals.fireActivity = 1;
+    audio._nextCrackle = 1; context.currentTime = 1.1; audio.update(study, true);
+    assert.equal(played.length, 1); assert.equal(played[0][1], false, 'close cracks still schedule');
+    study.burnVisuals.impactEvents.push({ id: 1, strength: .4, time: study.animationTime, position: { x: 0 }, kind: 'pop' });
+    context.currentTime = 2; audio.update(study, true);
+    assert.equal(played.at(-1)[1], 'pop', 'pops still schedule');
+    study.burnVisuals.impactEvents.push({ id: 2, strength: .5, time: study.animationTime, position: { x: 1 } });
+    context.currentTime = 3; audio.update(study, true);
+    assert.equal(played.at(-1)[1], true, 'sluffs still schedule');
   } finally { audio.dispose(); }
 });
