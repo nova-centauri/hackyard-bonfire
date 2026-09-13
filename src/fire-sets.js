@@ -34,19 +34,26 @@ function grainMap(seed = 3) {
 
 function tartanMap() {
   return dataTexture(128, (u, v) => {
-    const x = (u * 8) % 1, y = (v * 8) % 1;
-    let r = 32, g = 34, b = 42;
-    if (x < .045 || x > .48 && x < .52 || y < .045 || y > .48 && y < .52) { r = 214; g = 210; b = 200; }
-    if (x > .22 && x < .265 || y > .22 && y < .265) { r = 132; g = 28; b = 32; }
-    if (x > .71 && x < .735 || y > .71 && y < .735) { r = 176; g = 148; b = 72; }
+    const x = (u * 3.2) % 1, y = (v * 3.2) % 1;
+    let r = 36, g = 38, b = 48;
+    const band = (a, lo, hi) => (a >= lo && a <= hi);
+    if (band(x, 0, .08) || band(x, .46, .54) || band(y, 0, .08) || band(y, .46, .54)) { r = 210; g = 204; b = 192; }
+    if (band(x, .2, .28) || band(y, .2, .28)) { r = 148; g = 32; b = 38; }
+    if (band(x, .7, .74) || band(y, .7, .74)) { r = 184; g = 150; b = 64; }
     return [r, g, b];
   });
 }
 
+const BRICK_PALETTES = {
+  home: ['#a35238', '#8b3d28', '#c26a44', '#6e3222', '#b45a3a', '#7a4530'],
+  grand: ['#c4b296', '#9a8870', '#d2c2a6', '#8a7862', '#b8a888', '#ae9a7c'],
+  cream: ['#e6dccb', '#d4c8b4', '#efe6d6', '#c8bca8', '#ddd2c0', '#bdb3a0'],
+};
+
 // Instanced running-bond (or ashlar) on +Z or ±X faces. One draw for a whole set.
 class BrickBatch {
   constructor() { this.bricks = []; }
-  wall({ width, height, cx, cy, cz, axis = 'z', sign = 1, color, brickWidth, rowHeight, seed, gap = .016, depth = .052, soot = 0, irregular = .22 }) {
+  wall({ width, height, cx, cy, cz, axis = 'z', sign = 1, color, brickWidth, rowHeight, seed, gap = .016, depth = .07, soot = 0, irregular = .22 }) {
     const rand = random(seed), rows = Math.max(1, Math.round(height / rowHeight)), stepY = height / rows;
     for (let row = 0; row < rows; row++) {
       const offset = (row % 2) * brickWidth / 2;
@@ -60,10 +67,12 @@ class BrickBatch {
         const towardFire = 1 - Math.min(1, Math.abs(x) / Math.max(.2, width / 2));
         const low = 1 - (y + height / 2) / height;
         const sootShade = soot ? Math.max(.52, 1 - soot * towardFire * (.35 + low * .65)) : 1;
+        const palette = Array.isArray(color) ? color : [color];
         this.bricks.push({
           cx, cy, cz, axis, sign, x, y,
-          w: b - a - gap, h: stepY - gap, d: depth * (.82 + rand() * .36),
-          color, shade: (.76 + rand() * .42) * sootShade,
+          w: b - a - gap, h: stepY - gap, d: depth * (.88 + rand() * .42),
+          color: palette[Math.floor(rand() * palette.length)],
+          shade: (.82 + rand() * .34) * sootShade,
         });
       }
     }
@@ -138,7 +147,7 @@ function addWoodpile(parent, piles, seed) {
           radius: radius * (.88 + rand() * .22),
           length: length * (.9 + rand() * .18),
           along, end: !!pile.end,
-          shade: pile.end ? .78 + rand() * .32 : .62 + rand() * .4,
+          shade: pile.end ? .7 + rand() * .28 : .55 + rand() * .45,
         });
       }
     }
@@ -153,7 +162,7 @@ function addWoodpile(parent, piles, seed) {
     object.scale.set(piece.radius, piece.length, piece.radius);
     object.updateMatrix();
     mesh.setMatrixAt(index, object.matrix);
-    mesh.setColorAt(index, tint.set(piece.end ? '#c9a66a' : '#6a4a2c').multiplyScalar(piece.shade));
+    mesh.setColorAt(index, tint.set(piece.end ? '#a07a48' : '#5a3c24').multiplyScalar(piece.shade));
   });
   mesh.castShadow = mesh.receiveShadow = true; group.add(mesh);
   return group;
@@ -197,18 +206,18 @@ function addMantelGoods(parent, scene, y, z, mats) {
   const goods = new THREE.Group(); goods.name = 'hearth-mantel-goods'; parent.add(goods);
   const brass = material('#8a6a36', .7, .35);
   if (scene.id === 'stove') {
-    for (const x of [-.55, .55]) {
-      box(goods, [.03, .16, .03], [x, y + .1, z], brass);
-      const cup = new THREE.Mesh(new THREE.CylinderGeometry(.035, .03, .05, 10), brass);
-      cup.position.set(x, y + .2, z); goods.add(cup);
+    for (const x of [-.62, .62]) {
+      box(goods, [.04, .2, .04], [x, y + .12, z], brass);
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(.045, .038, .06, 10), brass);
+      cup.position.set(x, y + .24, z); goods.add(cup);
     }
     return;
   }
-  const span = scene.mouth.width * (scene.id === 'grand' ? .28 : .22);
+  const span = scene.mouth.width * (scene.id === 'grand' ? .3 : .24);
   for (const x of [-span, span]) {
-    box(goods, [.035, scene.id === 'grand' ? .22 : .17, .035], [x, y + .12, z], brass);
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(.04, .032, .055, 10), brass);
-    cup.position.set(x, y + (scene.id === 'grand' ? .26 : .21), z); goods.add(cup);
+    box(goods, [.045, scene.id === 'grand' ? .26 : .2, .045], [x, y + .14, z], brass);
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(.05, .04, .065, 10), brass);
+    cup.position.set(x, y + (scene.id === 'grand' ? .3 : .24), z); goods.add(cup);
   }
   box(goods, [.16, .2, .06], [0, y + .12, z], material('#2b241c'));
   box(goods, [.018, .018, .02], [0, y + .12, z + .04], brass);
@@ -222,8 +231,8 @@ function addFireplace(group, scene, mats) {
   const { width: w, height: h, depth: d } = scene.mouth;
   const grand = scene.id === 'grand', surround = grand ? .78 : .52;
   const bricks = new BrickBatch();
-  const brickColor = grand ? '#b39f84' : '#9a4f38';
-  const brickW = grand ? .7 : .38, brickH = grand ? .36 : .175, soot = grand ? .28 : .4;
+  const brickColor = grand ? BRICK_PALETTES.grand : BRICK_PALETTES.home;
+  const brickW = grand ? .7 : .38, brickH = grand ? .36 : .175, soot = grand ? .22 : .38;
   box(group, [w, h, .18], [0, h / 2, -d / 2 - .09], mats.firebrick);
   box(group, [w, .04, d], [0, .003, 0], mats.soot);
   for (const side of [-1, 1]) {
@@ -237,6 +246,8 @@ function addFireplace(group, scene, mats) {
   const breast = grand ? .92 : .74;
   box(group, [w + surround * 2, breast, d + .28], [0, h + breast / 2, .02], mats.mortar);
   bricks.wall({ width: w + surround * 2, height: breast, cx: 0, cy: h + breast / 2, cz: d / 2 + .16, axis: 'z', sign: 1, color: brickColor, brickWidth: grand ? .78 : .4, rowHeight: grand ? .3 : .18, seed: 14, soot: .22 });
+  const hearthFrontW = w + surround * 2 + 1.1, hearthFrontY = -.1;
+  bricks.wall({ width: hearthFrontW, height: .22, cx: 0, cy: hearthFrontY - .11, cz: d / 2 + .95, axis: 'z', sign: 1, color: brickColor, brickWidth: brickW, rowHeight: .11, seed: 3, irregular: .18 });
   bricks.flush(group);
 
   const mantel = new THREE.Group(); mantel.name = 'hearth-mantel'; group.add(mantel);
@@ -251,11 +262,11 @@ function addFireplace(group, scene, mats) {
       for (const dx of [-.16, 0, .16]) box(mantel, [.04, h - .72, .04], [x + dx, h / 2, d / 2 + .38], mats.flute);
     }
   } else {
-    const wood = new THREE.MeshStandardMaterial({ map: mats.grain, roughness: .82, color: '#6a3d22' });
-    box(mantel, [w + surround * 2 + .55, .2, d + .72], [0, h + breast + .12, .06], wood);
+    const wood = new THREE.MeshStandardMaterial({ map: mats.grain, roughness: .82, color: '#7a4a28' });
+    box(mantel, [w + surround * 2 + .7, .24, d + .86], [0, h + breast + .14, .1], wood);
     for (const side of [-1, 1]) {
-      const x = side * (w / 2 + surround * .35);
-      box(mantel, [.2, .28, .22], [x, h + breast - .08, d / 2 + .18], wood);
+      const x = side * (w / 2 + surround * .28);
+      box(mantel, [.24, .34, .28], [x, h + breast - .1, d / 2 + .22], wood);
     }
   }
   addMantelGoods(group, scene, grand ? h + breast + .32 : h + breast + .22, d / 2 + .12, mats);
@@ -293,15 +304,15 @@ function addStove(group, scene, mats) {
     collar.position.set(0, y, -.06); stove.add(collar);
   }
 
-  const door = new THREE.Group(); door.position.set(-w / 2 - .03, 0, d / 2 + .05); door.rotation.y = -2.05; stove.add(door);
-  box(door, [w + .04, .07, .055], [w / 2, .08, 0], iron);
-  box(door, [w + .04, .07, .055], [w / 2, h - .05, 0], iron);
-  box(door, [.07, h - .08, .055], [0, h / 2, 0], iron);
-  box(door, [.07, h - .08, .055], [w, h / 2, 0], iron);
-  const glass = new THREE.Mesh(new THREE.PlaneGeometry(w * .78, h * .62),
-    new THREE.MeshStandardMaterial({ color: '#140804', metalness: .35, roughness: .12, transparent: true, opacity: .42, emissive: '#4a1808', emissiveIntensity: .22 }));
-  glass.position.set(w / 2, h / 2, .01); door.add(glass);
-  box(door, [.045, .22, .07], [w - .08, h / 2, .07], mats.steel);
+  const door = new THREE.Group(); door.position.set(-w / 2 - .02, 0, d / 2 + .04); door.rotation.y = -1.35; stove.add(door);
+  box(door, [w + .02, .055, .04], [w / 2, .06, 0], iron);
+  box(door, [w + .02, .055, .04], [w / 2, h - .04, 0], iron);
+  box(door, [.05, h - .06, .04], [.02, h / 2, 0], iron);
+  box(door, [.05, h - .06, .04], [w - .02, h / 2, 0], iron);
+  const glass = new THREE.Mesh(new THREE.PlaneGeometry(w * .82, h * .7),
+    new THREE.MeshStandardMaterial({ color: '#2a1810', metalness: .45, roughness: .08, transparent: true, opacity: .28, emissive: '#5a220c', emissiveIntensity: .18 }));
+  glass.position.set(w / 2, h / 2, .008); door.add(glass);
+  box(door, [.035, .2, .055], [w - .06, h / 2, .05], mats.steel);
 }
 
 function addStoveAlcove(group, scene, mats) {
@@ -309,18 +320,18 @@ function addStoveAlcove(group, scene, mats) {
   const alcoveW = 2.4, alcoveH = 2.14, breastW = 3.55, breastD = .7;
   const backZ = -d / 2 - .4, frontZ = backZ + breastD;
   const alcove = new THREE.Group(); alcove.name = 'stove-alcove'; group.add(alcove);
-  const bricks = new BrickBatch(), cream = '#d8cfc0';
+  const bricks = new BrickBatch();
   box(alcove, [alcoveW, alcoveH, .14], [0, alcoveH / 2, backZ], mats.mortar);
-  bricks.wall({ width: alcoveW, height: alcoveH, cx: 0, cy: alcoveH / 2, cz: backZ + .07, axis: 'z', sign: 1, color: cream, brickWidth: .36, rowHeight: .165, seed: 21, irregular: .08, soot: .12 });
+  bricks.wall({ width: alcoveW, height: alcoveH, cx: 0, cy: alcoveH / 2, cz: backZ + .07, axis: 'z', sign: 1, color: BRICK_PALETTES.cream, brickWidth: .36, rowHeight: .165, seed: 21, irregular: .1, soot: .08 });
   for (const side of [-1, 1]) {
     box(alcove, [.12, alcoveH, breastD], [side * alcoveW / 2, alcoveH / 2, backZ + breastD / 2], mats.mortar);
-    bricks.wall({ width: breastD, height: alcoveH, cx: side * alcoveW / 2, cy: alcoveH / 2, cz: backZ + breastD / 2, axis: 'x', sign: -side, color: cream, brickWidth: .34, rowHeight: .165, seed: 30 + side, irregular: .08 });
+    bricks.wall({ width: breastD, height: alcoveH, cx: side * alcoveW / 2, cy: alcoveH / 2, cz: backZ + breastD / 2, axis: 'x', sign: -side, color: BRICK_PALETTES.cream, brickWidth: .34, rowHeight: .165, seed: 30 + side, irregular: .1 });
     const jambW = (breastW - alcoveW) / 2;
     box(alcove, [jambW, alcoveH, .16], [side * (alcoveW + jambW) / 2, alcoveH / 2, frontZ], mats.mortar);
-    bricks.wall({ width: jambW, height: alcoveH, cx: side * (alcoveW + jambW) / 2, cy: alcoveH / 2, cz: frontZ + .08, axis: 'z', sign: 1, color: cream, brickWidth: .36, rowHeight: .165, seed: 50 + side, irregular: .08 });
+    bricks.wall({ width: jambW, height: alcoveH, cx: side * (alcoveW + jambW) / 2, cy: alcoveH / 2, cz: frontZ + .08, axis: 'z', sign: 1, color: BRICK_PALETTES.cream, brickWidth: .36, rowHeight: .165, seed: 50 + side, irregular: .1 });
   }
   box(alcove, [breastW, .55, .16], [0, alcoveH + .275, frontZ], mats.mortar);
-  bricks.wall({ width: breastW, height: .55, cx: 0, cy: alcoveH + .275, cz: frontZ + .08, axis: 'z', sign: 1, color: cream, brickWidth: .38, rowHeight: .17, seed: 8, irregular: .08 });
+  bricks.wall({ width: breastW, height: .55, cx: 0, cy: alcoveH + .275, cz: frontZ + .08, axis: 'z', sign: 1, color: BRICK_PALETTES.cream, brickWidth: .38, rowHeight: .17, seed: 8, irregular: .1 });
   bricks.flush(alcove);
   const mantel = new THREE.Group(); mantel.name = 'hearth-mantel'; group.add(mantel);
   box(mantel, [breastW + .22, .13, .4], [0, alcoveH + .62, frontZ + .08], mats.charcoal);
@@ -364,7 +375,7 @@ export function addFireSet(parent, scene) {
   const floorY = stove ? -.8 : grand ? -.52 : -.48;
   const hearthY = stove ? -.26 : -.1;
   addRoom(group, {
-    floorY, wallColor: stove ? '#c8b9a4' : grand ? '#3f352c' : '#c4b49a',
+    floorY, wallColor: stove ? '#d4c6b0' : grand ? '#6e5c48' : '#d2c2a8',
     ceilingY: stove ? 3.15 : grand ? 4.6 : 3.85, backZ: stove ? -d / 2 - .55 : -d / 2 - .7,
     seed: stove ? 4 : grand ? 6 : 5, floorColor: stove ? '#6b4e32' : grand ? '#4a3828' : '#5c4028',
     rug: { width: stove ? 3.4 : grand ? 5.6 : 4.2, depth: stove ? 2.15 : grand ? 3.1 : 2.5, y: floorY + .02, z: stove ? 2.35 : 3.1, map: tartanMap() },
@@ -380,18 +391,18 @@ export function addFireSet(parent, scene) {
     addStoveAlcove(group, scene, mats);
     addStove(group, scene, mats);
     addWoodpile(group, [
-      { x: 0, y: floorY + .01, z: .72, rows: 4, cols: 9, radius: .055, length: .42, along: 'z', end: true },
-      { x: -.92, y: hearthY, z: .22, rows: 4, cols: 3, radius: .05, length: .32, along: 'x' },
-      { x: .92, y: hearthY, z: .22, rows: 4, cols: 3, radius: .05, length: .32, along: 'x' },
+      { x: 0, y: floorY + .01, z: .78, rows: 5, cols: 11, radius: .062, length: .46, along: 'z', end: true },
+      { x: -.88, y: hearthY, z: .38, rows: 5, cols: 3, radius: .058, length: .36, along: 'x' },
+      { x: .88, y: hearthY, z: .38, rows: 5, cols: 3, radius: .058, length: .36, along: 'x' },
     ], 81);
   } else {
     addFireplace(group, scene, mats);
-    const stackX = w / 2 + (grand ? 1.15 : .92);
+    const stackX = w / 2 + (grand ? .82 : .62);
     addWoodpile(group, [
-      { x: -stackX, y: hearthY + .02, z: d / 2 * .15, rows: grand ? 5 : 4, cols: grand ? 4 : 3, radius: grand ? .07 : .058, length: grand ? .48 : .38, along: 'x' },
-      { x: stackX, y: hearthY + .02, z: d / 2 * .15, rows: grand ? 5 : 4, cols: grand ? 4 : 3, radius: grand ? .07 : .058, length: grand ? .48 : .38, along: 'x' },
+      { x: -stackX, y: hearthY + .02, z: d / 2 * .35, rows: grand ? 6 : 5, cols: grand ? 5 : 4, radius: grand ? .078 : .068, length: grand ? .52 : .42, along: 'x' },
+      { x: stackX, y: hearthY + .02, z: d / 2 * .35, rows: grand ? 6 : 5, cols: grand ? 5 : 4, radius: grand ? .078 : .068, length: grand ? .52 : .42, along: 'x' },
     ], grand ? 27 : 19);
-    addTools(group, { x: stackX + (grand ? .55 : .42), y: hearthY + .02, z: d / 2 + .15, brass: grand });
+    addTools(group, { x: stackX + (grand ? .62 : .5), y: hearthY + .02, z: d / 2 + .28, brass: grand });
   }
   return { group, surface, colliders: mouthColliders(scene) };
 }

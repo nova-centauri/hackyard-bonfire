@@ -13,18 +13,18 @@ export const FIRE_SCENES = Object.freeze([
     limits: '5 pieces · short cuts · no stumps', maxPieces: 5, fuelTypes: indoorFuel,
     mouth: Object.freeze({ width: 2.65, height: 2.35, depth: 1.65 }),
     length: 1.65, radius: .20, maxLength: 1.8, maxRadius: .23,
-    camera: [0.85, 1.85, 9.1], target: [0, 1.15, 0.2], flameScale: .66 }),
+    camera: [0.55, 1.55, 7.5], target: [0, 1.02, 0.28], flameScale: .66 }),
   define({ id: 'grand', label: 'Grand fireplace', description: 'A broad stone hall fireplace, carved surround, and a generous hearth fire.',
     limits: '6 pieces · larger cuts · no stumps', maxPieces: 6, fuelTypes: indoorFuel,
     mouth: Object.freeze({ width: 3.9, height: 3.25, depth: 2.15 }),
     length: 2.35, radius: .26, maxLength: 2.6, maxRadius: .30,
-    camera: [1.15, 2.45, 12.4], target: [0, 1.45, 0.25], flameScale: .86 }),
+    camera: [0.8, 2.05, 10.4], target: [0, 1.28, 0.35], flameScale: .86 }),
   define({ id: 'stove', label: 'Wood stove', description: 'A compact cast-iron stove in a cream-brick alcove, a few small pieces behind its open door.',
     limits: '3 pieces · small logs and kindling only', maxPieces: 3,
     fuelTypes: Object.freeze(['small-log', 'kindling']),
     mouth: Object.freeze({ width: .88, height: .80, depth: .70 }),
     length: .76, radius: .125, maxLength: .64, maxRadius: .095,
-    camera: [0.35, 1.52, 6.35], target: [0, 0.82, 0.22], flameScale: .32 }),
+    camera: [0.22, 1.28, 5.35], target: [0, 0.72, 0.28], flameScale: .32 }),
 ]);
 
 export const getFireScene = id => FIRE_SCENES.find(scene => scene.id === id) || FIRE_SCENES[0];

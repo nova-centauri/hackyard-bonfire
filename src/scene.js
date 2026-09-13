@@ -420,15 +420,17 @@ export class BonfireViewer {
   else if(hybrid){dirt.visible=false;ashSurface=addDirtClearing(opaque,config.seed);}
   if(mode===3)dirt.material=new THREE.MeshStandardMaterial({color:'#121820',roughness:.23,metalness:.8});
   const ambient=new THREE.HemisphereLight(mode===2&&!hybrid?'#fff5de':hybrid?'#c4b496':'#9cadc6',mode===2&&!hybrid?'#827f72':'#1c1612',hybrid?.2:mode===2?2.3:.65);scene.add(ambient);
-  if(indoor&&hybrid){ambient.color.set('#e8c8a0');ambient.groundColor.set('#3a2818');ambient.intensity=.4;}
+  if(indoor&&hybrid){ambient.color.set('#f0d2ae');ambient.groundColor.set('#4a3424');ambient.intensity=.62;}
   const moon=new THREE.DirectionalLight(mode===2&&!hybrid?'#ffffff':hybrid?'#c8c0d2':'#b2c9e4',hybrid?.28:mode===2?2:mode===1?3.0:1.2);moon.position.set(-3,7,3);moon.castShadow=!hybrid;
   moon.shadow.mapSize.set(2048,2048);moon.shadow.camera.left=-4;moon.shadow.camera.right=4;moon.shadow.camera.top=5;moon.shadow.camera.bottom=-4;moon.shadow.normalBias=.035;scene.add(moon);
-  if(indoor&&hybrid){moon.color.set('#f2d8b4');moon.position.set(-2.4,4.6,6.8);moon.intensity=.42;}
+  if(indoor&&hybrid){moon.color.set('#f6ddc0');moon.position.set(-2.2,4.8,7.2);moon.intensity=.7;}
   const light=new THREE.PointLight('#ff9a43',hybrid?22:mode===2?7:21,hybrid?8.8:9,2);light.position.set(0,hybrid?.85:1.45,0);scene.add(light);
   if(indoor&&hybrid){
-    light.intensity=fireScene.id==='stove'?16:20;light.distance=11;
-    light.position.set(0,Math.min(.85,fireScene.mouth.height*.55),.12);
-    const lamp=new THREE.PointLight('#ffd2a8',3.8,13,2);lamp.position.set(2.2,2.6,3.4);scene.add(lamp);
+    light.intensity=fireScene.id==='stove'?14:18;light.distance=7;
+    light.position.set(0,Math.min(.7,fireScene.mouth.height*.45),.06);
+    const spill=new THREE.PointLight('#ffb56a',fireScene.id==='stove'?9:12,12,2);
+    spill.position.set(0,fireScene.mouth.height*.42,fireScene.mouth.depth/2+1.15);scene.add(spill);
+    const lamp=new THREE.PointLight('#ffd8b4',5.5,14,2);lamp.position.set(2.4,2.5,3.6);scene.add(lamp);
   }
   if(hybrid){light.castShadow=true;light.shadow.mapSize.set(512,512);light.shadow.camera.near=.12;light.shadow.camera.far=8.8;light.shadow.bias=-.0006;light.shadow.normalBias=.016;light.shadow.radius=1.6;}
   const coreLight=new THREE.PointLight('#ff4a12',hybrid?5.6:8,hybrid?3.2:5,2);coreLight.position.set(0,hybrid?.16:.38,.08);scene.add(coreLight);
