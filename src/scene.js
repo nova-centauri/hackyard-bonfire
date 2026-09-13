@@ -20,6 +20,7 @@ import { createAshBed, updateAshBed } from './ash-bed.js';
 import { createBurnVisuals, updateBurnVisuals } from './burn-visuals.js';
 import { createSceneFuelMesh, disposeFuelMesh } from './fuel-mesh.js';
 import { QualityGovernor, TIER_SETTINGS, isTier, pixelRatioFor, sizeCap, startingTier } from './quality.js';
+import { orbitLimits, polarLimits, fitLook } from './camera-rig.js';
 import { createEmbers } from './embers.js';
 import { createSteam } from './steam.js';
 import { createTwigInstances } from './twig-render.js';
@@ -50,6 +51,7 @@ export class BonfireViewer {
   this.governor=new QualityGovernor({tier:'high',cap:'ultra',now:performance.now()});
   this.quality=TIER_SETTINGS[this.governor.tier];this.msaa=this.quality.msaa;this.glowEnabled=true;this.qualityStarted=false;
   this.vignette=.24;this._projected=[new THREE.Vector3(),new THREE.Vector3(),new THREE.Vector3()];this._right=new THREE.Vector3();
+  this.orbit=null;
   // Antialias the offscreen scene, not the final full-screen canvas as well.
   this.renderer=new THREE.WebGLRenderer({antialias:false,alpha:false,powerPreference:'default'});
   this.renderer.info.autoReset=false;
@@ -71,7 +73,7 @@ export class BonfireViewer {
   this.controls=new OrbitControls(this.camera,this.renderer.domElement);
   this.controls.minDistance=2.1;this.controls.maxDistance=19;this.controls.maxPolarAngle=Math.PI*.48;
   this.controls.enableDamping=false;this.controls.enablePan=true;this.controls.target.set(0,1.8,0);
-  this.controls.addEventListener('change',()=>{this.depthDirty=true;this.queueRender();});
+  this.controls.addEventListener('change',()=>{this.constrainOrbit();this.depthDirty=true;this.queueRender();});
   this.depthTarget=new THREE.WebGLRenderTarget(1,1,{minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter});
   this.depthTarget.depthTexture=new THREE.DepthTexture(1,1,THREE.UnsignedIntType);
   this.depthMaterial=new THREE.MeshDepthMaterial({colorWrite:false});
@@ -123,10 +125,13 @@ export class BonfireViewer {
     e.preventDefault();
     if(e.key==='0')this.setView('full');
     else {
+      if(!this.orbit)return;
       const offset=this.camera.position.clone().sub(this.controls.target),s=new THREE.Spherical().setFromVector3(offset);
+      const polar=polarLimits(s.radius,this.orbit,this.controls.target.y);
       if(e.key==='ArrowLeft')s.theta-=.13;if(e.key==='ArrowRight')s.theta+=.13;
-      if(e.key==='ArrowUp')s.phi=Math.max(.12,s.phi-.1);if(e.key==='ArrowDown')s.phi=Math.min(Math.PI*.48,s.phi+.1);
-      if(e.key==='+'||e.key==='=')s.radius=Math.max(2.1,s.radius*.88);if(e.key==='-')s.radius=Math.min(19,s.radius*1.12);
+      if(e.key==='ArrowUp')s.phi=Math.max(polar.minPolarAngle,s.phi-.1);if(e.key==='ArrowDown')s.phi=Math.min(polar.maxPolarAngle,s.phi+.1);
+      if(e.key==='+'||e.key==='=')s.radius=Math.max(this.orbit.minDistance,s.radius*.88);if(e.key==='-')s.radius=Math.min(this.controls.maxDistance,s.radius*1.12);
+      s.theta=THREE.MathUtils.clamp(s.theta,this.orbit.minAzimuthAngle,this.orbit.maxAzimuthAngle);
       this.camera.position.copy(new THREE.Vector3().setFromSpherical(s).add(this.controls.target));this.controls.update();
     }
   });
@@ -234,12 +239,7 @@ export class BonfireViewer {
   this.config=config;
   if(!this.scenes.has(config.id))this.scenes.set(config.id,this.buildScene(config));
   this.current=this.scenes.get(config.id);this.renderPass.scene=this.current.scene;
-  const indoor=!!this.current.fireScene.mouth;
-  this.controls.minAzimuthAngle=indoor?-.48:-Infinity;this.controls.maxAzimuthAngle=indoor?.48:Infinity;
-  this.controls.minPolarAngle=indoor?Math.PI*.32:0;this.controls.maxPolarAngle=Math.PI*.48;
-  this.controls.enablePan=!indoor;
-  this.controls.minDistance=indoor?this.current.fireScene.mouth.depth/2+2:2.1;
-  this.controls.maxDistance=indoor?15:19;
+  this.applyOrbitRig(this.current.fireScene);
   this.applyStudyQuality(this.current);this.governor.reset(performance.now(),'scene');
   this.loadTextures(this.current);
   this.poker?.sync();
@@ -278,6 +278,20 @@ export class BonfireViewer {
   if(study.ashBed)textures.add(study.ashBed.userData.ashState.heatMap);
   for(const texture of textures)if(texture!==this.cloud&&texture!==this.depthTarget.depthTexture)texture.dispose();
  }
+ applyOrbitRig(scene) {
+  this.orbit=orbitLimits(scene);
+  const limits=this.orbit;
+  this.controls.minAzimuthAngle=limits.minAzimuthAngle;this.controls.maxAzimuthAngle=limits.maxAzimuthAngle;
+  this.controls.minPolarAngle=limits.minPolarAngle;this.controls.maxPolarAngle=limits.maxPolarAngle;
+  this.controls.minDistance=limits.minDistance;this.controls.maxDistance=limits.maxDistance;
+  this.controls.enablePan=limits.enablePan;
+ }
+ constrainOrbit() {
+  if(!this.orbit)return;
+  const polar=polarLimits(this.camera.position.distanceTo(this.controls.target),this.orbit,this.controls.target.y);
+  this.controls.minPolarAngle=polar.minPolarAngle;this.controls.maxPolarAngle=polar.maxPolarAngle;
+  fitLook(this.camera.position,this.controls.target,this.orbit);
+ }
  setView(view) {
   if(!this.config)return;this.detail=view;
   const c=this.config;
@@ -293,11 +307,15 @@ export class BonfireViewer {
       const halfAngle=Math.tan(THREE.MathUtils.degToRad(this.camera.fov)*.5);
       this.camera.position.z=Math.max(this.camera.position.z,width*.55/(halfAngle*this.camera.aspect)+place.mouth.depth/2+(view==='full'?1.2:.2));
     }
-    this.controls.maxDistance=Math.max(15,this.camera.position.distanceTo(this.controls.target)+.5);
+    this.controls.maxDistance=Math.max(this.orbit?.maxDistance??15,this.camera.position.distanceTo(this.controls.target)+.5);
   }
   else if(view==='logs'){this.camera.position.set(3.3,2.5,4.6);this.controls.target.set(.03,.94,.15);}
   else if(view==='coals'){this.camera.position.set(2.65,1.65,3.15);this.controls.target.set(.05,.35,.6);}
   else {this.camera.position.fromArray(c.camera);this.controls.target.fromArray(c.target);if(this.camera.aspect<1)this.camera.position.multiplyScalar(1.3);}
+  if(this.orbit){
+    const polar=polarLimits(this.camera.position.distanceTo(this.controls.target),this.orbit,this.controls.target.y);
+    this.controls.minPolarAngle=polar.minPolarAngle;this.controls.maxPolarAngle=polar.maxPolarAngle;
+  }
   this.camera.updateMatrixWorld();this.controls.update();this.depthDirty=true;this.queueRender();
  }
  setLayer(key,value) {

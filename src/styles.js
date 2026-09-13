@@ -1,3 +1,5 @@
+import { PIT_FULL } from './camera-rig.js';
+
 export const studies = [
   { id: 'cinematic', number: '01', name: 'After dark', style: 'Cinematic', tag: 'VOLUME / CHAR / ATMOSPHERE',
     description: 'Hot, translucent flame against cool night air. Rough bark, glowing fissures and a slow column of smoke.',
@@ -23,10 +25,10 @@ export const studies = [
     tag: 'INK & WASH / LUMINOUS FOLDS',
     description: 'Luminous folds over an earthen clearing. From slender kindling to heavy stumps, pallet slats and paper, follow each piece through flame, glowing char and quiet ash.',
     color: '#ffc27d', background: '#000000', ground: '#242823', smoke: '#77817e', bloom: .48, exposure: .98, seed: 22,
-    camera: [6.7, 4.3, 8.2], target: [0, 1.95, 0], flameScale: 1, mode: 5, solidMode: 2, fireVariant: 1, animated: true },
+    camera: [...PIT_FULL.camera], target: [...PIT_FULL.target], flameScale: 1, mode: 5, solidMode: 2, fireVariant: 1, animated: true },
   { id: 'wild-draft', number: '08', name: 'Wild draft', style: 'Turbulent flame', collection: 'refinements',
     tag: 'INK & WASH / CURLS & WISPS',
     description: 'A wind-touched fire, from bright kindling to the last coal. Logs, sawn wood, pallet pieces and the odd scrap of paper catch, char and settle into the dirt.',
     color: '#f5a665', background: '#000000', ground: '#242823', smoke: '#77817e', bloom: .48, exposure: .98, seed: 22,
-    camera: [6.7, 4.3, 8.2], target: [0, 1.95, 0], flameScale: 1, mode: 5, solidMode: 2, fireVariant: 2, animated: true },
+    camera: [...PIT_FULL.camera], target: [...PIT_FULL.target], flameScale: 1, mode: 5, solidMode: 2, fireVariant: 2, animated: true },
 ];

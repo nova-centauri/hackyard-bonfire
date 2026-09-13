@@ -27,6 +27,7 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
   budgets and the hearth burn-cycle wrapper.
 - `src/fire-sets.js` — indoor set dressing, mouth colliders, particle clip.
 - `src/quality.js` — LoD tiers, size cap, frame-pacing governor (pure).
+- `src/camera-rig.js` — pit default pose and orbit clamps (pure).
 - `src/lifecycle.js` — burn clock: fuel, heat, moisture, feed queue, tending.
 - `src/fuel-types.js` — kinds (logs, named woods, kindling, plank, stump,
   pallet, cardboard, crumpled newspaper), sizes, heat/moisture/char, the

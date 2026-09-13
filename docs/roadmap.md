@@ -31,6 +31,9 @@ Done in this pass:
   baked plaster detail and soot. Its static set uses nine material batches;
   indoor scenes skip outdoor ground/debris and twig GPU allocations. Optional
   authored room textures are specified in `planning/hearth-texture-pass.md`.
+  The living pit default is a little higher with the flame centered; indoor
+  orbit cannot pass the floor or a room-height ceiling, and outdoor pan stays
+  off the dirt.
 
 - Idle simulation cost cut from about 5.5 ms to about 1 ms per frame; the
   settled pile sleeps and wood sinks continuously as it burns instead of
@@ -119,6 +122,9 @@ soil. This remains an ambient campfire, with no new controls or activities.
 
 ## Work log
 
+- 2026-09-13 — Pit default look is a little higher, flame more centered.
+  Indoor orbit cannot pass the floor or a room-height ceiling stop; outdoor
+  pan is clamped off the dirt. Home framing is unchanged.
 - 2026-09-13 — Refined the scene catalog to Outdoor pit (default) and Home
   fireplace, removing Grand Fireplace and Wood Stove. The pit's 21 varied,
   partly buried stones have baked dirt, ash and inward scorching, with 59%
