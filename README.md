@@ -15,8 +15,10 @@ that; **Focus mode** in the header returns to it. Turn on **Sound** once and
 it comes back on the next visit with your first click.
 
 The **Scene** picker stays at the top left, including in focus mode. Choose
-the original outdoor pit, a home brick fireplace, a grand stone fireplace,
-or a small wood stove. Switching always starts a new fire, including when
+the original outdoor pit, a cottage brick fireplace, a grand stone hall
+fireplace, or a compact wood stove in a cream-brick alcove. The indoor
+places are furnished rooms — stacked cordwood, a tartan rug, mantel and
+tools — and switching always starts a new fire, including when
 returning to a scene: fuel, queue, coals, ash and the settled pile are discarded.
 Pause, burn speed, sound and automatic tending keep their current settings.
 

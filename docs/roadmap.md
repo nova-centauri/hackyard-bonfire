@@ -24,6 +24,9 @@ Done in this pass:
   and clocks are unchanged. Stove: 3 small pieces; home: 5 short cuts; grand:
   6 larger cuts; pit: the original 7 slots and all fuel types. Indoor mouths
   bound wood and gas, and their cuts apply to manual and automatic additions.
+  Indoor sets are furnished rooms (plank floor, tartan rug, stacked cordwood,
+  mantel goods). The stove is furniture-sized in a cream-brick alcove rather
+  than a walk-in iron box.
 
 - Idle simulation cost cut from about 5.5 ms to about 1 ms per frame; the
   settled pile sleeps and wood sinks continuously as it burns instead of
@@ -111,6 +114,11 @@ soil. This remains an ambient campfire, with no new controls or activities.
 
 ## Work log
 
+- 2026-09-13 — Graphical pass on the indoor places: cottage brick and carved
+  stone fireplaces with timber/stone mantels, andirons, tools and cordwood;
+  the wood stove shrunk to a four-legged cast-iron body in a cream-brick
+  alcove with slate hearth, under-hearth wood and a tartan rug. Warm indoor
+  fill light. Outdoor pit unchanged.
 - 2026-09-13 — Added four fire settings, a focus-accessible picker, fixed mouth
   contacts, appropriate wood cuts and slot budgets, plus complete scene
   disposal on switching. Original still studies retain their outdoor sets.
