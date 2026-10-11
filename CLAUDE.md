@@ -8,7 +8,7 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
 
 - `npm install` once; Node 22.
 - `npm run dev` — Vite on http://127.0.0.1:5186/ (root opens study 08).
-- `npm test` — `node --test`, pure-logic tests, about ten seconds. No browser.
+- `npm test` — `node --test`, pure-logic tests without a browser.
 - `npm run build` / `npm run preview` — production bundle in `dist/`.
 - Headless render check: Playwright's Chromium with `--use-angle=swiftshader`
   can load the preview, wait for `.stage[data-ready="true"]`, and read the
@@ -51,8 +51,8 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
 ## Conventions that matter
 
 - Two clocks: the burn clock (fixed 0.5 s steps, accelerated by the speed
-  control) and the animation clock (real seconds). Never couple animation
-  state (wind, flicker, poses) back into burn integration; the accelerated-
+  control) and the animation clock (real seconds). Keep animation
+  state (wind, flicker, poses) independent of burn integration; the accelerated-
   time equivalence test guards this. The one sanctioned crossing is the
   settled wood positions (`cycle.setLogPoses`), which shape where heat
   reaches; a piece still falling keeps its last resting pose there. Anything
@@ -67,5 +67,5 @@ direction and the plan live in `docs/roadmap.md`; keep it current.
 - Quality settings are uniforms and cadences, not shader defines, so tier
   changes never recompile.
 - New user-facing controls need a reason; the viewer mostly watches.
-- Tests: add or adjust a test with every behaviour change; keep them in
-  `test/` as `node:test` files importing from `src/` directly.
+- Simulation tests live in `test/` as `node:test` files importing from `src/`
+  directly. Update relevant deterministic tests when their behavior changes.
